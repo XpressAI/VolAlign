@@ -1,7 +1,9 @@
 
 import os
-import tifffile
+import subprocess
+import tempfile
 import numpy as np
+import tifffile
 import SimpleITK as sitk
 from npy2bdv import BdvWriter
 from bigstream.align import alignment_pipeline
@@ -97,6 +99,56 @@ def create_bdv_xml(tiles_folder: str,
     except Exception as e:
         print(f"Error during BDV/XML creation: {e}")
         raise
+
+
+def stitch_tiles(xml_file_path: str, fiji_path: str) -> None:
+    """
+    Executes a tile stitching pipeline by generating an ImageJ macro and running Fiji in headless mode.
+    
+    This function constructs an ImageJ macro that performs three sequential operations on the 
+    specified XML file:
+      1. Calculate pairwise shifts using phase correlation.
+      2. Filter pairwise shifts based on specified criteria.
+      3. Optimize the global alignment and apply the calculated shifts.
+      
+    The macro is written to a temporary file which is then executed by Fiji using a headless
+    mode command-line call. The temporary macro file is automatically cleaned up.
+    
+    Args:
+        xml_file_path (str): The path to the BDV/XML file that contains the tile configuration.
+        fiji_path (str): The full path to the Fiji executable.
+    
+    Returns:
+        None
+    
+    Example:
+        >>> stitch_tiles("/path/to/tiles.xml", "/path/to/Fiji.app/ImageJ-linux64")
+    """
+    # Construct the ImageJ macro content.
+    macro_content = f'''
+    run("Calculate pairwise shifts ...", "select=[{xml_file_path}] process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] method=[Phase Correlation] show_expert_grouping_options show_expert_algorithm_parameters how_to_treat_timepoints=[treat individually] how_to_treat_channels=group how_to_treat_illuminations=group how_to_treat_angles=[treat individually] how_to_treat_tiles=compare channels=[Average Channels] downsample_in_x=1 downsample_in_y=1 downsample_in_z=1 number_of_peaks_to_check=75 minimal_overlap=5 subpixel_accuracy");
+    run("Filter pairwise shifts ...", "select=[{xml_file_path}] min_r=0 max_r=1 max_shift_in_x=0 max_shift_in_y=0 max_shift_in_z=0 max_displacement=0");
+    run("Optimize globally and apply shifts ...", "select=[{xml_file_path}] process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] relative=2.500 absolute=3.500 global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] fix_group_0-0,");
+    '''.strip()
+    
+    # Write the macro to a temporary file.
+    with tempfile.NamedTemporaryFile(mode='w+', suffix='.ijm', delete=True) as tmp:
+        tmp.write(macro_content)
+        tmp.flush()  # Ensure the macro content is written to disk.
+        
+        # Build the command to run Fiji in headless mode with the macro.
+        cmd = [
+            fiji_path,
+            '--headless',
+            '--console',
+            '-macro',
+            tmp.name
+        ]
+        
+        print("Executing command:", " ".join(cmd))
+        # Execute the command.
+        subprocess.run(cmd)
+
 
 
 def blend_tiles(xml_file: str,
