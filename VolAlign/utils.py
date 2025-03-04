@@ -35,7 +35,7 @@ def blend_ind(offsets: List[np.ndarray],
     try:
         # Print basic statistics for debugging.
         for idx, pic in enumerate(pictures):
-            print(f"Picture {idx} dtype: {pic.dtype}, max value: {pic.max()}, min value: {pic.min()}")
+            print(f"Tiile {idx} dtype: {pic.dtype}, max value: {pic.max()}, min value: {pic.min()}")
         
         # Determine the overall Z, Y, and X ranges.
         min_z = int(min(offset[2] for offset in offsets))

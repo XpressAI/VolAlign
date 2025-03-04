@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "VolAlign"
+version = "0.1"
+description = "A simple example Python package for volume alignment"
+authors = [
+    { name = "Mansour Alawi", email = "mansour@xpress.ai" }
+]
+license = { text = "MIT" }
+urls = { "Homepage" = "https://github.com/yourusername/my_package" }
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
