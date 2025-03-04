@@ -6,26 +6,28 @@ from typing import List, Optional
 from exm.stitching.tileset import Tileset
 
 def blend_ind(offsets: List[np.ndarray],
-               pictures: List[np.ndarray],
-               indices: Optional[List[int]] = None,
-               inverts: Optional[List[int]] = None) -> np.ndarray:
+              pictures: List[np.ndarray],
+              indices: Optional[List[int]] = None,
+              inverts: Optional[List[int]] = None) -> np.ndarray:
     """
-    Blends a list of volume tiles together according to specified offsets,
-    accounting for different z-stack sizes and starting points.
+    Blends a list of volume tiles into a single composite image based on specified offsets.
+    
+    This function computes the overall dimensions required by examining the offsets and the shape of each tile.
+    Each tile is then placed into the composite volume at its corresponding offset (adjusted relative to the minimum offset),
+    with optional inversion along specified axes. In the case of overlapping regions, later tiles will overwrite earlier ones.
     
     Args:
-        offsets (List[np.ndarray]): An array of offsets for each image tile.
-        pictures (List[np.ndarray]): A list of image tiles to blend.
-        indices (Optional[List[int]]): Optional list of indices specifying the order 
-                                       in which to blend the images.
-        inverts (Optional[List[int]]): Optional list of axes along which to invert the corresponding image tiles.
+        offsets (List[np.ndarray]): A list of offset vectors for each image tile, each specified as [x, y, z].
+        pictures (List[np.ndarray]): A list of 3D image tiles (with shape [z, y, x]) to be merged.
+        indices (Optional[List[int]]): (Reserved for future use) Optional list specifying an order for blending.
+        inverts (Optional[List[int]]): Optional axis or list of axes along which to invert (flip) each corresponding tile before blending.
     
     Returns:
-        np.ndarray: The blended image.
+        np.ndarray: A new 3D NumPy array (dtype uint16) representing the blended composite image.
     
     Raises:
         ValueError: If the list of pictures is empty or if the number of offsets does not match the number of pictures.
-        RuntimeError: If an unexpected error occurs during blending.
+        RuntimeError: If an unexpected error occurs during the blending process.
     """
     if not pictures:
         raise ValueError("The list of pictures must not be empty.")
@@ -35,9 +37,9 @@ def blend_ind(offsets: List[np.ndarray],
     try:
         # Print basic statistics for debugging.
         for idx, pic in enumerate(pictures):
-            print(f"Tiile {idx} dtype: {pic.dtype}, max value: {pic.max()}, min value: {pic.min()}")
+            print(f"Tile {idx} dtype: {pic.dtype}, max value: {pic.max()}, min value: {pic.min()}")
         
-        # Determine the overall Z, Y, and X ranges.
+        # Determine the overall Z, Y, and X ranges based on offsets and tile sizes.
         min_z = int(min(offset[2] for offset in offsets))
         max_z = int(max(offset[2] + tile.shape[0] for offset, tile in zip(offsets, pictures)))
         total_z_range = max_z - min_z
@@ -50,17 +52,17 @@ def blend_ind(offsets: List[np.ndarray],
         max_x = int(max(offset[0] + tile.shape[2] for offset, tile in zip(offsets, pictures)))
         total_x_range = max_x - min_x  
 
-        # Initialize the blended image.
+        # Initialize the composite image.
         newpic_shape = (total_z_range, total_y_range, total_x_range)
         newpic = np.zeros(newpic_shape, dtype=np.uint16)
         
-        # Process each tile.
+        # Process and place each tile.
         for off, tile in zip(offsets, pictures):
             start_z = int(off[2] - min_z)
             start_y = int(off[1] - min_y)
             start_x = int(off[0] - min_x)
             
-            # Adjust for inverts if provided.
+            # Apply inversion if specified.
             if inverts:
                 tile = np.flip(tile, axis=inverts)
             
@@ -77,27 +79,26 @@ def blend_ind(offsets: List[np.ndarray],
 
 def convert_zarr_to_tiff(zarr_file: str, tiff_file: str) -> None:
     """
-    Convert a Zarr-formatted file to a TIFF image file.
+    Converts a Zarr-formatted file into a TIFF image file.
     
-    This function reads a dataset from a Zarr file, converts it to a NumPy array,
-    and writes the array to a TIFF file using the 'minisblack' photometric convention.
-    It is designed to handle multi-dimensional data, including 3D image volumes.
+    This function reads a dataset from a Zarr file, converts it to a NumPy array, and writes
+    the array to a TIFF file using the 'minisblack' photometric convention. It supports multi-dimensional data.
     
     Args:
         zarr_file (str): Path to the input Zarr file.
         tiff_file (str): Path to the output TIFF file.
-        
-    Raises:
-        Exception: If an error occurs during the reading of the Zarr file or the writing
-                   of the TIFF file.
-        
+    
+    Returns:
+        None. The TIFF file is written directly to disk.
+    
+    Note:
+        Any errors during reading or writing are caught and logged.
     """
     try:
-        # Open the Zarr file in read mode
+        # Open the Zarr file in read mode and convert to a NumPy array.
         zarr_data = zarr.open(zarr_file, mode='r')
-        # Convert the Zarr data to a NumPy array
         data_array = np.array(zarr_data)
-        # Write the NumPy array to a TIFF file with the 'minisblack' photometric setting
+        # Write the data array to a TIFF file.
         tifffile.imwrite(tiff_file, data_array, photometric='minisblack')
         print(f"Successfully converted {zarr_file} to {tiff_file}")
     except Exception as e:
@@ -106,24 +107,25 @@ def convert_zarr_to_tiff(zarr_file: str, tiff_file: str) -> None:
 
 def convert_tiff_to_zarr(tiff_file: str, zarr_file: str) -> None:
     """
-    Convert a TIFF image file to a Zarr-formatted file.
+    Converts a TIFF image file to a Zarr-formatted file.
     
     This function reads a TIFF image file into a NumPy array and saves it in Zarr format.
-    It supports multi-dimensional image data, such as 3D volumes, making it useful for 
-    converting large image datasets into a format that supports chunked, compressed storage.
+    It supports multi-dimensional image data (e.g., 3D volumes) for efficient, chunked storage.
     
     Args:
         tiff_file (str): Path to the input TIFF file.
         zarr_file (str): Path where the output Zarr file will be stored.
-        
-    Raises:
-        Exception: If an error occurs during the reading of the TIFF file or the writing
-                   of the Zarr file.
+    
+    Returns:
+        None. The Zarr file is written directly to disk.
+    
+    Note:
+        Any errors during the conversion process are caught and logged.
     """
     try:
-        # Read the TIFF file into a NumPy array
+        # Read the TIFF file into a NumPy array.
         image_array = tifffile.imread(tiff_file)
-        # Save the NumPy array to a Zarr file
+        # Save the NumPy array to a Zarr file.
         zarr.save(zarr_file, image_array)
         print(f"Successfully converted {tiff_file} to {zarr_file}")
     except Exception as e:
@@ -132,41 +134,39 @@ def convert_tiff_to_zarr(tiff_file: str, zarr_file: str) -> None:
 
 def downsample_tiff(input_path: str, output_path: str, factors: tuple, order: int = 1) -> None:
     """
-    Reads a 3D TIFF image, downsamples it using specified factors and interpolation order, 
-    and writes the downsampled image to a new TIFF file.
+    Downsamples a 3D TIFF image using specified downsampling factors and interpolation order.
     
-    This function performs the following steps:
-      1. Reads the image from the given input TIFF file path.
-      2. Computes the downsampling scale as the reciprocal of each factor.
-      3. Uses scipy.ndimage.zoom to downsample the image with the specified spline interpolation order.
-      4. Saves the downsampled image to the given output TIFF file path.
+    The function performs the following steps:
+      1. Reads the image from the input TIFF file.
+      2. Computes the downsampling scale as the reciprocal of each provided factor.
+      3. Uses scipy.ndimage.zoom to rescale the image with the specified spline interpolation order.
+      4. Writes the downsampled image to the output TIFF file using the 'minisblack' photometric setting.
     
     Args:
         input_path (str): Path to the input TIFF file containing the original 3D image volume.
         output_path (str): Path where the downsampled TIFF image will be saved.
         factors (tuple or list of float): Downsampling factors for each axis (e.g., (6, 6, 6)).
-        order (int, optional): The order of the spline interpolation used in zoom. 
-                               Default is 1 (linear interpolation).
+        order (int, optional): Order of the spline interpolation used in zoom (default is 1 for linear interpolation).
     
     Returns:
-        None. The function writes the downsampled image directly to the output file.
+        None. The downsampled image is saved directly to disk.
     
     Example:
         >>> downsample_tiff("input_volume.tif", "downsampled_volume.tif", (6, 6, 6), order=1)
     """
     try:
-        # Read the 3D image from the TIFF file
+        # Read the 3D image from the TIFF file.
         image_array = tifffile.imread(input_path)
         print(f"Input image shape: {image_array.shape}")
 
-        # Compute downsampling scale for each dimension (reciprocal of each factor)
+        # Compute the scale factors as the reciprocal of each provided factor.
         scale_factors = tuple(1 / factor for factor in factors)
         
-        # Downsample the image using the computed scale factors and specified interpolation order
+        # Downsample the image.
         downsampled_array = zoom(image_array, scale_factors, order=order)
         print(f"Downsampled image shape: {downsampled_array.shape}")
 
-        # Save the downsampled image to the output TIFF file
+        # Save the downsampled image.
         tifffile.imwrite(output_path, downsampled_array, photometric='minisblack')
         print(f"Downsampled image saved to {output_path}")
 
@@ -176,42 +176,42 @@ def downsample_tiff(input_path: str, output_path: str, factors: tuple, order: in
 
 def stack_tiff_images(file1: str, file2: str, output_file: str) -> None:
     """
-    Reads two TIFF files, verifies they have the same shape, stacks them along a new channel axis,
-    and saves the resulting stacked image to an output file.
-
-    This function performs the following steps:
-      1. Reads two input TIFF images using tifffile.
-      2. Checks that both images have the same shape (expected shape: (z, y, x)).
-      3. Stacks the two images along the second axis (resulting in a shape of (z, 2, y, x)),
-         effectively creating a two-channel volume.
-      4. Writes the stacked image to the specified output TIFF file.
-      
+    Stacks two TIFF images along a new channel axis and writes the result to an output file.
+    
+    The function performs the following steps:
+      1. Reads two TIFF images (expected to have the same shape, e.g., (z, y, x)).
+      2. Verifies that the shapes match; otherwise, raises a ValueError.
+      3. Stacks the images along a new axis (resulting shape: (z, 2, y, x)) to create a multi-channel volume.
+      4. Saves the stacked image to the specified output file.
+    
     Args:
         file1 (str): Path to the first input TIFF file.
         file2 (str): Path to the second input TIFF file.
         output_file (str): Path where the output stacked TIFF image will be saved.
     
+    Returns:
+        None. The stacked image is written directly to disk.
+    
     Raises:
         ValueError: If the input images do not have the same shape.
-    
     """
     try:
-        # Read the first TIFF image
+        # Read the first TIFF image.
         with tifffile.TiffFile(file1) as tif:
             img1 = tif.asarray()
 
-        # Read the second TIFF image
+        # Read the second TIFF image.
         with tifffile.TiffFile(file2) as tif:
             img2 = tif.asarray()
 
-        # Ensure both images have the same shape (expected: (z, y, x))
+        # Check that both images have the same shape.
         if img1.shape != img2.shape:
             raise ValueError("Input images must have the same shape (z, y, x)")
 
-        # Stack the images along a new axis (axis 1) to create a 2-channel volume (z, 2, y, x)
+        # Stack the images along a new axis to create a two-channel volume.
         stacked_img = np.stack([img1, img2], axis=1)
 
-        # Save the stacked image to the output file
+        # Save the stacked image.
         tifffile.imwrite(output_file, stacked_img)
         print(f"Stacked image saved as {output_file}")
 
@@ -224,29 +224,27 @@ def reorient_volume_and_save_tiff(input_path: str,
                                     rotation: int, 
                                     flip: bool) -> np.ndarray:
     """
-    Reads a 3D volume from a TIFF file, reorients it by applying a specified rotation 
-    (in multiples of 90°) and an optional flip along the first (z) axis, and saves the 
-    resulting volume as a TIFF file.
+    Reorients a 3D volume from a TIFF file by applying a specified rotation (in multiples of 90°)
+    and an optional flip along the first (z) axis, then saves the result as a TIFF file.
     
-    The rotation is applied clockwise on the (y, x) axes using np.rot90. Allowed rotation 
-    values are 0, 90, 180, or 270 degrees. For example:
+    The rotation is performed on the (y, x) axes using numpy.rot90. Allowed rotation values are 0, 90, 180, or 270 degrees.
+    For example:
       - rotation=90 rotates the volume 90° clockwise.
       - rotation=180 rotates the volume 180°.
       - rotation=270 rotates the volume 270° clockwise (or 90° counter-clockwise).
-    
-    After rotation, if flip is True, the volume is flipped along the first axis.
+    After rotation, if flip is True, the volume is flipped along the first (z) axis.
     
     Args:
         input_path (str): Path to the input TIFF file containing the 3D volume.
         output_path (str): Path where the reoriented TIFF file will be saved.
         rotation (int): Rotation angle in degrees. Must be one of [0, 90, 180, 270].
-        flip (bool): If True, flip the volume along the first (z) axis after rotation.
+        flip (bool): If True, the volume is flipped along the first (z) axis after rotation.
     
     Returns:
-        np.ndarray: The reoriented volume.
+        np.ndarray: The reoriented volume as a NumPy array.
     
     Example:
-        >>> reoriented = reorient_volume_from_tiff_and_save_tiff("input.tif", "output.tif", rotation=90, flip=True)
+        >>> reoriented = reorient_volume_and_save_tiff("input.tif", "output.tif", rotation=90, flip=True)
     """
     # Read the volume from the TIFF file.
     volume = tifffile.imread(input_path)
@@ -255,9 +253,7 @@ def reorient_volume_and_save_tiff(input_path: str,
     if rotation not in [0, 90, 180, 270]:
         raise ValueError("Rotation must be 0, 90, 180, or 270 degrees.")
     
-    # Compute the number of 90° clockwise rotations.
-    # np.rot90 rotates counter-clockwise when k is positive.
-    # To rotate clockwise, use a negative k.
+    # Compute the number of 90° rotations (negative for clockwise rotation).
     k = -(rotation // 90)
     
     # Rotate the volume along the (y, x) axes.
@@ -267,10 +263,8 @@ def reorient_volume_and_save_tiff(input_path: str,
     if flip:
         reoriented = reoriented[::-1, :, :]
     
-    # Save the reoriented volume as a TIFF file.
+    # Save the reoriented volume to a TIFF file.
     tifffile.imwrite(output_path, reoriented)
     print(f"Reoriented volume saved as TIFF at: {output_path}")
     
     return reoriented
-
-
