@@ -392,7 +392,6 @@ def linear_alignment_tuning(fixed_path: str,
                 'smooth_sigmas': (0., 0.),
             }
             steps = [('affine', {**common_kwargs, **affine_kwargs})]
-        print(steps)
         
         affine_3d = alignment_pipeline(fixed_volume,
                                        moving_volume,
@@ -400,7 +399,6 @@ def linear_alignment_tuning(fixed_path: str,
                                        moving_spacing,
                                        steps)
         
-        print(f"Computed affine matrix shape: {affine_3d.shape}")
         
         np.savetxt(output_matrix_file, affine_3d)
         print(f"Affine transformation matrix saved to {output_matrix_file}")

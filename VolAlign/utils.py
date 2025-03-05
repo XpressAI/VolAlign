@@ -103,6 +103,7 @@ def convert_zarr_to_tiff(zarr_file: str, tiff_file: str) -> None:
         print(f"Successfully converted {zarr_file} to {tiff_file}")
     except Exception as e:
         print(f"Error during conversion: {e}")
+        raise
 
 
 def convert_tiff_to_zarr(tiff_file: str, zarr_file: str) -> None:
