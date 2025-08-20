@@ -9,7 +9,7 @@ from bigstream.align import alignment_pipeline
 from tqdm import tqdm
 from typing import List, Optional
 from exm.stitching.tileset import Tileset
-from VolAlign.utils import blend_ind
+from .utils import blend_ind
 
 
 def create_bdv_xml(output_h5_file: str,

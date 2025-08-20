@@ -2,8 +2,15 @@ import zarr
 import tifffile
 import numpy as np
 from scipy.ndimage import zoom
-from typing import List, Optional
+from numcodecs import Blosc
+from typing import List, Optional, Tuple, Union
+from tqdm import tqdm
 from exm.stitching.tileset import Tileset
+
+
+# =============================================================================
+# VOLUME BLENDING AND COMPOSITION
+# =============================================================================
 
 def blend_ind(offsets: List[np.ndarray],
               pictures: List[np.ndarray],
@@ -77,33 +84,86 @@ def blend_ind(offsets: List[np.ndarray],
         raise RuntimeError(f"Unexpected error occurred during image blending: {e}")
 
 
-def convert_zarr_to_tiff(zarr_file: str, tiff_file: str) -> None:
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def _calculate_safe_chunks(shape: Tuple[int, ...], 
+                          dtype: np.dtype, 
+                          chunk_size: int,
+                          max_memory_mb: int = 512) -> Tuple[int, ...]:
     """
-    Converts a Zarr-formatted file into a TIFF image file.
-    
-    This function reads a dataset from a Zarr file, converts it to a NumPy array, and writes
-    the array to a TIFF file using the 'minisblack' photometric convention. It supports multi-dimensional data.
+    Helper function to calculate safe chunk sizes to avoid memory issues.
     
     Args:
-        zarr_file (str): Path to the input Zarr file.
-        tiff_file (str): Path to the output TIFF file.
+        shape: Volume shape
+        dtype: Data type
+        chunk_size: Desired chunk size along first axis
+        max_memory_mb: Maximum memory per chunk in MB
     
     Returns:
-        None. The TIFF file is written directly to disk.
-    
-    Note:
-        Any errors during reading or writing are caught and logged.
+        Tuple of chunk sizes for each dimension
     """
-    try:
-        # Open the Zarr file in read mode and convert to a NumPy array.
-        zarr_data = zarr.open(zarr_file, mode='r')
-        data_array = np.array(zarr_data)
-        # Write the data array to a TIFF file.
-        tifffile.imwrite(tiff_file, data_array, photometric='minisblack')
-        print(f"Successfully converted {zarr_file} to {tiff_file}")
-    except Exception as e:
-        print(f"Error during conversion: {e}")
-        raise
+    bytes_per_voxel = np.dtype(dtype).itemsize
+    
+    if len(shape) >= 3:
+        spatial_size = shape[1] * shape[2] * bytes_per_voxel
+        max_z_slices = max(1, min(chunk_size, (max_memory_mb * 1024 * 1024) // spatial_size))
+        return (min(max_z_slices, shape[0]),) + shape[1:]
+    else:
+        return (min(chunk_size, shape[0]),) + shape[1:]
+
+
+# =============================================================================
+# FORMAT CONVERSION FUNCTIONS
+# =============================================================================
+
+def convert_zarr_to_tiff(zarr_path: str, 
+                        tiff_path: str,
+                        chunk_size: Optional[int] = None,
+                        photometric: str = 'minisblack') -> None:
+    """
+    Convert Zarr volumes to TIFF format with optional chunked processing for large volumes.
+    
+    For small volumes (chunk_size=None), loads entire volume into memory for fast conversion.
+    For large volumes, processes in chunks to avoid memory issues.
+    
+    Args:
+        zarr_path (str): Path to input Zarr volume
+        tiff_path (str): Path for output TIFF file
+        chunk_size (Optional[int]): Number of Z-slices to process at once. 
+                                   If None, loads entire volume (faster for small volumes)
+        photometric (str): TIFF photometric interpretation
+    
+    Returns:
+        None
+    """
+    zarr_data = zarr.open(zarr_path, mode='r')
+    
+    if chunk_size is None:
+        # Simple conversion - load entire volume (suitable for smaller volumes)
+        print(f"Converting Zarr {zarr_data.shape} to TIFF: {tiff_path}")
+        try:
+            data_array = np.array(zarr_data)
+            tifffile.imwrite(tiff_path, data_array, photometric=photometric)
+            print(f"Conversion complete: {tiff_path}")
+        except Exception as e:
+            print(f"Error during conversion: {e}")
+            raise
+    else:
+        # Chunked conversion for large volumes
+        print(f"Converting large Zarr {zarr_data.shape} to TIFF (chunked): {tiff_path}")
+        
+        with tifffile.TiffWriter(tiff_path, bigtiff=True) as tiff_writer:
+            for z_start in tqdm(range(0, zarr_data.shape[0], chunk_size), desc="Converting to TIFF"):
+                z_end = min(z_start + chunk_size, zarr_data.shape[0])
+                chunk = zarr_data[z_start:z_end]
+                
+                # Write each slice in the chunk
+                for i, slice_data in enumerate(chunk):
+                    tiff_writer.write(slice_data, photometric=photometric)
+        
+        print(f"Chunked conversion complete: {tiff_path}")
 
 
 def convert_tiff_to_zarr(tiff_file: str, zarr_file: str) -> None:
@@ -131,6 +191,78 @@ def convert_tiff_to_zarr(tiff_file: str, zarr_file: str) -> None:
         print(f"Successfully converted {tiff_file} to {zarr_file}")
     except Exception as e:
         print(f"Error during conversion: {e}")
+        raise
+
+
+# =============================================================================
+# DOWNSAMPLING FUNCTIONS
+# =============================================================================
+
+def downsample_zarr_volume(input_zarr_path: str, 
+                          output_zarr_path: str, 
+                          downsample_factors: Tuple[float, float, float],
+                          chunk_size: int = 50,
+                          compression: str = "zstd",
+                          compression_level: int = 3) -> None:
+    """
+    Memory-efficient downsampling of Zarr volumes with chunked processing.
+    
+    Processes the volume in chunks to avoid loading the entire dataset into memory,
+    making it suitable for very large microscopy volumes.
+    
+    Args:
+        input_zarr_path (str): Path to input Zarr volume
+        output_zarr_path (str): Path for output downsampled Zarr volume
+        downsample_factors (Tuple[float, float, float]): Downsampling factors for (z, y, x)
+        chunk_size (int): Number of Z-slices to process at once
+        compression (str): Compression algorithm ('zstd', 'lz4', 'blosc')
+        compression_level (int): Compression level (1-9)
+    
+    Returns:
+        None
+    """
+    # Open input Zarr volume
+    input_data = zarr.open(input_zarr_path, mode='r')
+    
+    # Calculate output shape
+    original_shape = input_data.shape
+    output_shape = tuple(int(dim / factor) for dim, factor in zip(original_shape, downsample_factors))
+    
+    print(f"Downsampling from {original_shape} to {output_shape}")
+    
+    # Create output Zarr with compression
+    compressor = Blosc(cname=compression, clevel=compression_level, shuffle=Blosc.BITSHUFFLE)
+    output_chunks = _calculate_safe_chunks(output_shape, input_data.dtype, chunk_size)
+    
+    output_data = zarr.open(
+        output_zarr_path,
+        mode='w',
+        shape=output_shape,
+        dtype=input_data.dtype,
+        chunks=output_chunks,
+        compressor=compressor
+    )
+    
+    # Process in chunks along Z-axis
+    scale_factors = tuple(1.0 / factor for factor in downsample_factors)
+    
+    for z_start in tqdm(range(0, original_shape[0], chunk_size), desc="Downsampling chunks"):
+        z_end = min(z_start + chunk_size, original_shape[0])
+        
+        # Load chunk
+        chunk = input_data[z_start:z_end]
+        
+        # Downsample chunk
+        downsampled_chunk = zoom(chunk, scale_factors, order=1)
+        
+        # Calculate output indices
+        out_z_start = int(z_start / downsample_factors[0])
+        out_z_end = min(out_z_start + downsampled_chunk.shape[0], output_shape[0])
+        
+        # Store downsampled chunk
+        output_data[out_z_start:out_z_end] = downsampled_chunk[:out_z_end-out_z_start]
+    
+    print(f"Downsampling complete: {output_zarr_path}")
 
 
 def downsample_tiff(input_path: str, output_path: str, factors: tuple, order: int = 1) -> None:
@@ -173,6 +305,174 @@ def downsample_tiff(input_path: str, output_path: str, factors: tuple, order: in
 
     except Exception as e:
         print(f"Error during downsampling: {e}")
+        raise
+
+
+# =============================================================================
+# UPSAMPLING FUNCTIONS
+# =============================================================================
+
+def upsample_segmentation_labels(input_zarr_path: str,
+                                output_zarr_path: str,
+                                upsample_factors: Tuple[float, float, float],
+                                chunk_size: int = 50,
+                                compression: str = "zstd",
+                                target_shape: Optional[Tuple[int, int, int]] = None) -> None:
+    """
+    Upsample segmentation label volumes while preserving integer label values.
+    
+    Uses nearest-neighbor interpolation (order=0) to maintain discrete integer
+    labels during upsampling, essential for segmentation masks.
+    
+    Args:
+        input_zarr_path (str): Path to input segmentation Zarr volume
+        output_zarr_path (str): Path for upsampled output Zarr volume
+        upsample_factors (Tuple[float, float, float]): Upsampling factors for (z, y, x)
+        chunk_size (int): Number of Z-slices to process at once
+        compression (str): Compression algorithm for output
+        target_shape (Optional[Tuple[int, int, int]]): Override output shape (z, y, x).
+                                                      If provided, takes precedence over
+                                                      calculated shape from upsample_factors.
+                                                      Essential for masks that must exactly
+                                                      match full resolution volume dimensions.
+    
+    Returns:
+        None
+    """
+    # Open input segmentation volume
+    input_data = zarr.open(input_zarr_path, mode='r')
+    
+    # Calculate output shape
+    original_shape = input_data.shape
+    
+    if target_shape is not None:
+        # Use override target shape
+        output_shape = target_shape
+        # Recalculate actual upsample factors based on target shape
+        actual_factors = tuple(target_dim / orig_dim for target_dim, orig_dim in zip(target_shape, original_shape))
+        print(f"Upsampling segmentation from {original_shape} to {output_shape} (target override)")
+        print(f"Actual upsample factors: {actual_factors}")
+    else:
+        # Use calculated shape from provided factors
+        output_shape = tuple(int(dim * factor) for dim, factor in zip(original_shape, upsample_factors))
+        actual_factors = upsample_factors
+        print(f"Upsampling segmentation from {original_shape} to {output_shape}")
+    
+    # Create output Zarr with compression
+    compressor = Blosc(cname=compression, clevel=3, shuffle=Blosc.BITSHUFFLE)
+    output_chunks = _calculate_safe_chunks(output_shape, input_data.dtype, chunk_size)
+    
+    output_data = zarr.open(
+        output_zarr_path,
+        mode='w',
+        shape=output_shape,
+        dtype=input_data.dtype,  # Preserve integer dtype for labels
+        chunks=output_chunks,
+        compressor=compressor
+    )
+    
+    # Process in chunks along Z-axis
+    for z_start in tqdm(range(0, original_shape[0], chunk_size), desc="Upsampling labels"):
+        z_end = min(z_start + chunk_size, original_shape[0])
+        
+        # Load chunk
+        chunk = input_data[z_start:z_end]
+        
+        # Upsample chunk with nearest-neighbor (order=0) to preserve labels
+        upsampled_chunk = zoom(chunk, actual_factors, order=0)
+        
+        # Calculate output indices
+        out_z_start = int(z_start * actual_factors[0])
+        out_z_end = min(out_z_start + upsampled_chunk.shape[0], output_shape[0])
+        
+        # Store upsampled chunk
+        output_data[out_z_start:out_z_end] = upsampled_chunk[:out_z_end-out_z_start]
+    
+    print(f"Label upsampling complete: {output_zarr_path}")
+
+
+# =============================================================================
+# CHANNEL OPERATIONS
+# =============================================================================
+
+def merge_zarr_channels(channel_a_path: str,
+                       channel_b_path: str, 
+                       output_path: str,
+                       merge_strategy: str = "mean",
+                       block_depth: int = 50,
+                       compression: str = "zstd") -> None:
+    """
+    Memory-efficient merging of two Zarr volumes representing different imaging channels.
+    
+    Supports different merging strategies for combining channels (e.g., 405nm and 488nm)
+    commonly used in microscopy registration workflows.
+    
+    Args:
+        channel_a_path (str): Path to first channel Zarr volume
+        channel_b_path (str): Path to second channel Zarr volume  
+        output_path (str): Path for merged output Zarr volume
+        merge_strategy (str): Merging method - "mean", "max", or "stack"
+        block_depth (int): Number of Z-slices to process per block
+        compression (str): Compression algorithm for output
+    
+    Returns:
+        None
+    """
+    # Open input volumes as memory maps
+    vol_a = zarr.open(channel_a_path, mode='r')
+    vol_b = zarr.open(channel_b_path, mode='r')
+    
+    print(f"Channel A shape: {vol_a.shape}, dtype: {vol_a.dtype}")
+    print(f"Channel B shape: {vol_b.shape}, dtype: {vol_b.dtype}")
+    
+    # Ensure compatible shapes
+    if vol_a.shape != vol_b.shape:
+        min_shape = tuple(min(sa, sb) for sa, sb in zip(vol_a.shape, vol_b.shape))
+        print(f"Cropping to common shape: {min_shape}")
+    else:
+        min_shape = vol_a.shape
+    
+    mz, my, mx = min_shape
+    
+    # Configure output based on merge strategy
+    if merge_strategy == "stack":
+        out_shape = (2, mz, my, mx)
+        out_chunks = (1, min(block_depth, mz), min(512, my), min(512, mx))
+    else:
+        out_shape = (mz, my, mx)
+        out_chunks = (min(block_depth, mz), min(512, my), min(512, mx))
+    
+    # Create output Zarr
+    compressor = Blosc(cname=compression, clevel=3, shuffle=Blosc.SHUFFLE)
+    out_dtype = np.dtype(vol_a.dtype).newbyteorder('<')
+    
+    z_out = zarr.open(output_path, mode="w", shape=out_shape, chunks=out_chunks,
+                      dtype=out_dtype, compressor=compressor)
+    
+    # Process blocks along Z-axis
+    for z0 in tqdm(range(0, mz, block_depth), desc=f"Merging channels ({merge_strategy})"):
+        z1 = min(z0 + block_depth, mz)
+        a_block = vol_a[z0:z1, :my, :mx]
+        b_block = vol_b[z0:z1, :my, :mx]
+        
+        if merge_strategy == "max":
+            merged_block = np.maximum(a_block, b_block).astype(out_dtype, copy=False)
+            z_out[z0:z1, :, :] = merged_block
+            
+        elif merge_strategy == "mean":
+            # Use float32 for computation, then cast back
+            merged_block = ((a_block.astype(np.float32) + b_block.astype(np.float32)) * 0.5)
+            merged_block = np.rint(merged_block).astype(out_dtype, copy=False)
+            z_out[z0:z1, :, :] = merged_block
+            
+        elif merge_strategy == "stack":
+            z_out[0, z0:z1, :, :] = a_block.astype(out_dtype, copy=False)
+            z_out[1, z0:z1, :, :] = b_block.astype(out_dtype, copy=False)
+            
+        else:
+            raise ValueError(f"Unknown merge_strategy: {merge_strategy}")
+    
+    print(f"Channel merging complete: {output_path} (shape: {z_out.shape})")
 
 
 def stack_tiff_images(file1: str, file2: str, output_file: str) -> None:
@@ -218,7 +518,79 @@ def stack_tiff_images(file1: str, file2: str, output_file: str) -> None:
 
     except Exception as e:
         print(f"Error during stacking: {e}")
+        raise
 
+
+# =============================================================================
+# INTENSITY SCALING FUNCTIONS
+# =============================================================================
+
+def scale_intensity_to_uint16(input_zarr_path: str,
+                             output_zarr_path: str,
+                             intensity_range: Optional[Tuple[float, float]] = None,
+                             chunk_size: int = 50) -> None:
+    """
+    Scale intensity values in a Zarr volume to uint16 range [0, 65535].
+    
+    Useful for normalizing microscopy data before processing or visualization.
+    
+    Args:
+        input_zarr_path (str): Path to input Zarr volume
+        output_zarr_path (str): Path for scaled output Zarr volume
+        intensity_range (Optional[Tuple[float, float]]): Min/max values for scaling.
+                                                        If None, uses global min/max
+        chunk_size (int): Number of Z-slices to process at once
+    
+    Returns:
+        None
+    """
+    # Open input volume
+    input_data = zarr.open(input_zarr_path, mode='r')
+    
+    # Determine intensity range
+    if intensity_range is None:
+        print("Computing global intensity range...")
+        min_val = float(np.min(input_data))
+        max_val = float(np.max(input_data))
+    else:
+        min_val, max_val = intensity_range
+    
+    print(f"Scaling intensity range [{min_val}, {max_val}] to uint16")
+    
+    # Create output Zarr
+    compressor = Blosc(cname="zstd", clevel=3, shuffle=Blosc.BITSHUFFLE)
+    output_chunks = _calculate_safe_chunks(input_data.shape, np.uint16, chunk_size)
+    
+    output_data = zarr.open(
+        output_zarr_path,
+        mode='w',
+        shape=input_data.shape,
+        dtype=np.uint16,
+        chunks=output_chunks,
+        compressor=compressor
+    )
+    
+    # Process in chunks
+    for z_start in tqdm(range(0, input_data.shape[0], chunk_size), desc="Scaling intensity"):
+        z_end = min(z_start + chunk_size, input_data.shape[0])
+        chunk = input_data[z_start:z_end]
+        
+        # Scale to [0, 65535] range
+        if max_val > min_val:
+            scaled_chunk = (chunk.astype(np.float32) - min_val) * (65535.0 / (max_val - min_val))
+            scaled_chunk = np.clip(scaled_chunk, 0.0, 65535.0)
+            scaled_chunk = (scaled_chunk + 0.5).astype(np.uint16)
+        else:
+            scaled_chunk = np.zeros_like(chunk, dtype=np.uint16)
+        
+        output_data[z_start:z_end] = scaled_chunk
+    
+    print(f"Intensity scaling complete: {output_zarr_path}")
+
+
+# =============================================================================
+# VOLUME TRANSFORMATION FUNCTIONS
+# =============================================================================
 
 def reorient_volume_and_save_tiff(input_path: str, 
                                     output_path: str, 
