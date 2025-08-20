@@ -4,14 +4,49 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "VolAlign"
-version = "0.1"
-description = "A simple example Python package for volume alignment"
+version = "0.1.0"
+description = "A comprehensive Python package for volumetric image alignment, stitching, and processing"
+readme = "README.md"
 authors = [
     { name = "Mansour Alawi", email = "mansour@xpress.ai" }
 ]
 license = { text = "MIT" }
-urls = { "Homepage" = "https://github.com/yourusername/my_package" }
-dependencies = []
+[project.urls]
+Homepage = "https://github.com/XpressAI/VolAlign"
+Repository = "https://github.com/XpressAI/VolAlign"
+requires-python = ">=3.10"
+dependencies = [
+    # Main git-based dependencies - these take priority and pip will handle their sub-dependencies
+    "ExSeq-Toolbox @ git+https://github.com/RuihanZhang2015/ExSeq-Toolbox.git",
+    "cellpose @ git+https://github.com/mansouralawi/cellpose.git",
+    
+    # Version constraints for compatibility
+    "numpy<2.0.0",
+    
+    # Note: ExSeq-Toolbox will automatically install bigstream and nd2reader forks
+    # All other dependencies will be automatically resolved by pip
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "mypy"
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
