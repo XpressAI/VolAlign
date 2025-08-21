@@ -2,6 +2,17 @@
 git+https://github.com/RuihanZhang2015/ExSeq-Toolbox.git
 git+https://github.com/mansouralawi/cellpose.git
 
+# Distributed processing dependencies (from cellpose distributed_deps)
+dask
+distributed
+dask_image
+dask-cuda
+pyyaml
+zarr
+dask_jobqueue
+bokeh
+pyarrow
+
 # Version constraints for compatibility
 numpy<2.0.0
 

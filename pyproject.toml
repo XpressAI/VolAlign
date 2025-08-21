@@ -11,9 +11,6 @@ authors = [
     { name = "Mansour Alawi", email = "mansour@xpress.ai" }
 ]
 license = { text = "MIT" }
-[project.urls]
-Homepage = "https://github.com/XpressAI/VolAlign"
-Repository = "https://github.com/XpressAI/VolAlign"
 requires-python = ">=3.10"
 dependencies = [
     # Main git-based dependencies - these take priority and pip will handle their sub-dependencies
@@ -22,6 +19,17 @@ dependencies = [
     
     # Version constraints for compatibility
     "numpy<2.0.0",
+
+    # Distributed processing dependencies (from cellpose distributed_deps)
+    "dask",
+    "distributed",
+    "dask_image",
+    "dask-cuda",
+    "pyyaml",
+    "zarr",
+    "dask_jobqueue",
+    "bokeh",
+    "pyarrow",
     
     # Note: ExSeq-Toolbox will automatically install bigstream and nd2reader forks
     # All other dependencies will be automatically resolved by pip
@@ -39,10 +47,16 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 
+[project.urls]
+Homepage = "https://github.com/XpressAI/VolAlign"
+Repository = "https://github.com/XpressAI/VolAlign"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=6.0",
     "pytest-cov",
+    "build",
+    "wheel",
     "black",
     "flake8",
     "mypy"
@@ -50,3 +64,12 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["VolAlign"]

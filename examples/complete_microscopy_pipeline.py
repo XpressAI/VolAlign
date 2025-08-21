@@ -14,7 +14,9 @@ The pipeline includes:
 
 import os
 from pathlib import Path
+
 from VolAlign import MicroscopyProcessingPipeline
+
 
 def main():
     # Configuration for the processing pipeline
@@ -120,14 +122,11 @@ def example_individual_functions():
     This demonstrates how to use the new functions directly without the
     high-level pipeline orchestrator.
     """
-    from VolAlign import (
-        downsample_zarr_volume,
-        merge_zarr_channels,
-        compute_affine_registration,
-        compute_deformation_field_registration,
-        distributed_nuclei_segmentation,
-        upsample_segmentation_labels
-    )
+    from VolAlign import (compute_affine_registration,
+                          compute_deformation_field_registration,
+                          distributed_nuclei_segmentation,
+                          downsample_zarr_volume, merge_zarr_channels,
+                          upsample_segmentation_labels)
     
     print("\n=== Individual Function Examples ===")
     

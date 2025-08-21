@@ -1,5 +1,7 @@
 import os
-from setuptools import setup, find_packages
+
+from setuptools import find_packages, setup
+
 
 # Read requirements from requirements.txt, filtering out git URLs
 def read_requirements(filename):
