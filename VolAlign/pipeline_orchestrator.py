@@ -44,7 +44,7 @@ class MicroscopyProcessingPipeline:
             FileNotFoundError: If config file doesn't exist
         """
         self.config = self.load_config_from_yaml(config_file)
-        
+
         # Validate and extract required parameters
         self._validate_and_extract_config()
 
@@ -58,7 +58,7 @@ class MicroscopyProcessingPipeline:
     def _validate_and_extract_config(self):
         """
         Validate and extract configuration parameters from YAML.
-        
+
         Raises:
             ValueError: If required configuration parameters are missing
         """
@@ -67,83 +67,110 @@ class MicroscopyProcessingPipeline:
             "working_directory",
             "voxel_spacing",
             "downsample_factors",
-            "block_size"
+            "block_size",
         ]
-        
+
         for param in required_params:
             if param not in self.config:
-                raise ValueError(f"Required parameter '{param}' missing from YAML configuration")
-        
+                raise ValueError(
+                    f"Required parameter '{param}' missing from YAML configuration"
+                )
+
         # Extract basic parameters
         self.working_directory = Path(self.config["working_directory"])
         self.working_directory.mkdir(parents=True, exist_ok=True)
-        
+
         self.voxel_spacing = self.config["voxel_spacing"]
         self.downsample_factors = tuple(self.config["downsample_factors"])
         self.block_size = self.config["block_size"]
 
         # Registration parameters - required
         if "registration" not in self.config:
-            raise ValueError("Required section 'registration' missing from YAML configuration")
-        
+            raise ValueError(
+                "Required section 'registration' missing from YAML configuration"
+            )
+
         self.registration_config = self.config["registration"]
-        
+
         if "merge_strategy" not in self.registration_config:
-            raise ValueError("Required parameter 'registration.merge_strategy' missing from YAML configuration")
+            raise ValueError(
+                "Required parameter 'registration.merge_strategy' missing from YAML configuration"
+            )
         if "channels" not in self.registration_config:
-            raise ValueError("Required parameter 'registration.channels' missing from YAML configuration")
-            
+            raise ValueError(
+                "Required parameter 'registration.channels' missing from YAML configuration"
+            )
+
         self.merge_strategy = self.registration_config["merge_strategy"]
         self.registration_channels = self.registration_config["channels"]
 
         # Segmentation parameters - required
         if "segmentation" not in self.config:
-            raise ValueError("Required section 'segmentation' missing from YAML configuration")
-        
+            raise ValueError(
+                "Required section 'segmentation' missing from YAML configuration"
+            )
+
         self.segmentation_config = self.config["segmentation"]
-        
+
         if "channel" not in self.segmentation_config:
-            raise ValueError("Required parameter 'segmentation.channel' missing from YAML configuration")
+            raise ValueError(
+                "Required parameter 'segmentation.channel' missing from YAML configuration"
+            )
         if "downsample_for_processing" not in self.segmentation_config:
-            raise ValueError("Required parameter 'segmentation.downsample_for_processing' missing from YAML configuration")
+            raise ValueError(
+                "Required parameter 'segmentation.downsample_for_processing' missing from YAML configuration"
+            )
         if "upsample_results" not in self.segmentation_config:
-            raise ValueError("Required parameter 'segmentation.upsample_results' missing from YAML configuration")
-            
+            raise ValueError(
+                "Required parameter 'segmentation.upsample_results' missing from YAML configuration"
+            )
+
         self.segmentation_channel = self.segmentation_config["channel"]
-        self.downsample_for_segmentation = self.segmentation_config["downsample_for_processing"]
+        self.downsample_for_segmentation = self.segmentation_config[
+            "downsample_for_processing"
+        ]
         self.upsample_results = self.segmentation_config["upsample_results"]
 
         # Multi-round data configuration - required for multi-round processing
         if "data" not in self.config:
             raise ValueError("Required section 'data' missing from YAML configuration")
-        
+
         self.data_config = self.config["data"]
-        
+
         if "reference_round" not in self.data_config:
-            raise ValueError("Required parameter 'data.reference_round' missing from YAML configuration")
+            raise ValueError(
+                "Required parameter 'data.reference_round' missing from YAML configuration"
+            )
         if "rounds" not in self.data_config:
-            raise ValueError("Required parameter 'data.rounds' missing from YAML configuration")
-            
+            raise ValueError(
+                "Required parameter 'data.rounds' missing from YAML configuration"
+            )
+
         self.reference_round = self.data_config["reference_round"]
         self.rounds_data = self.data_config["rounds"]
-        
+
         # Validate that reference round exists in rounds data
         if self.reference_round not in self.rounds_data:
-            raise ValueError(f"Reference round '{self.reference_round}' not found in data.rounds configuration")
+            raise ValueError(
+                f"Reference round '{self.reference_round}' not found in data.rounds configuration"
+            )
 
         # Cluster configuration - required
         if "cluster_config" not in self.config:
-            raise ValueError("Required section 'cluster_config' missing from YAML configuration")
-        
+            raise ValueError(
+                "Required section 'cluster_config' missing from YAML configuration"
+            )
+
         cluster_config = self.config["cluster_config"]
         required_cluster_params = ["n_workers", "threads_per_worker", "memory_limit"]
-        
+
         for param in required_cluster_params:
             if param not in cluster_config:
-                raise ValueError(f"Required parameter 'cluster_config.{param}' missing from YAML configuration")
-        
-        self.cluster_config = cluster_config
+                raise ValueError(
+                    f"Required parameter 'cluster_config.{param}' missing from YAML configuration"
+                )
 
+        self.cluster_config = cluster_config
 
     @staticmethod
     def load_config_from_yaml(config_file: str) -> Dict[str, Any]:
@@ -165,14 +192,12 @@ class MicroscopyProcessingPipeline:
             raise FileNotFoundError(f"Configuration file not found: {config_file}")
 
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, "r") as f:
                 config = yaml.safe_load(f)
             print(f"Configuration loaded from: {config_file}")
             return config
         except yaml.YAMLError as e:
             raise yaml.YAMLError(f"Error parsing YAML configuration: {e}")
-
-
 
     def process_all_rounds_from_config(self) -> Dict[str, Dict[str, str]]:
         """
@@ -185,20 +210,20 @@ class MicroscopyProcessingPipeline:
             raise ValueError("No rounds data found in configuration")
 
         processed_rounds = {}
-        
+
         print(f"Processing {len(self.rounds_data)} rounds from configuration...")
-        
+
         for round_name, tiff_files in self.rounds_data.items():
             print(f"\nProcessing round: {round_name}")
             zarr_files = self.prepare_round_data(round_name, tiff_files)
             processed_rounds[round_name] = zarr_files
-            
+
         return processed_rounds
 
     def run_complete_pipeline_from_config(self) -> Dict[str, Any]:
         """
         Run the complete pipeline using configuration data.
-        
+
         This method:
         1. Processes all rounds from config
         2. Runs registration between reference round and all other rounds
@@ -210,13 +235,15 @@ class MicroscopyProcessingPipeline:
             Dict[str, Any]: Complete pipeline results
         """
         if not self.rounds_data:
-            raise ValueError("No rounds data found in configuration. Please specify data.rounds in your YAML config.")
+            raise ValueError(
+                "No rounds data found in configuration. Please specify data.rounds in your YAML config."
+            )
 
         results = {
             "processed_rounds": {},
             "registrations": {},
             "segmentation": {},
-            "aligned_channels": {}
+            "aligned_channels": {},
         }
 
         # Step 1: Process all rounds
@@ -226,13 +253,15 @@ class MicroscopyProcessingPipeline:
 
         # Get reference round data
         reference_round_zarr = processed_rounds[self.reference_round]
-        
+
         # Step 2: Run segmentation on reference round
-        print(f"\n=== Step 2: Running segmentation on reference round ({self.reference_round}) ===")
+        print(
+            f"\n=== Step 2: Running segmentation on reference round ({self.reference_round}) ==="
+        )
         segmentation_results = self.run_segmentation_workflow(
             input_channel=reference_round_zarr[self.segmentation_channel],
             segmentation_output_dir=str(self.working_directory / "segmentation"),
-            segmentation_name=f"{self.reference_round}_nuclei"
+            segmentation_name=f"{self.reference_round}_nuclei",
         )
         results["segmentation"] = segmentation_results
 
@@ -241,15 +270,17 @@ class MicroscopyProcessingPipeline:
         for round_name, round_zarr in processed_rounds.items():
             if round_name == self.reference_round:
                 continue  # Skip reference round
-                
+
             print(f"\nRegistering {round_name} to {self.reference_round}...")
             registration_name = f"{self.reference_round}_to_{round_name}"
-            
+
             registration_results = self.run_registration_workflow(
                 fixed_round_data=reference_round_zarr,
                 moving_round_data=round_zarr,
-                registration_output_dir=str(self.working_directory / "registration" / registration_name),
-                registration_name=registration_name
+                registration_output_dir=str(
+                    self.working_directory / "registration" / registration_name
+                ),
+                registration_name=registration_name,
             )
             results["registrations"][round_name] = registration_results
 
@@ -259,7 +290,7 @@ class MicroscopyProcessingPipeline:
                 reference_round_data=reference_round_zarr,
                 target_round_data=round_zarr,
                 deformation_field_path=registration_results["deformation_field"],
-                output_directory=str(self.working_directory / "aligned" / round_name)
+                output_directory=str(self.working_directory / "aligned" / round_name),
             )
             results["aligned_channels"][round_name] = aligned_channels
 
@@ -267,7 +298,7 @@ class MicroscopyProcessingPipeline:
         print("\n=== Step 5: Saving results and generating reports ===")
         state_path = self.working_directory / "pipeline_state.json"
         report_path = self.working_directory / "processing_report.json"
-        
+
         self.save_pipeline_state(str(state_path))
         report = self.generate_processing_report(str(report_path))
         results["report"] = report
@@ -348,7 +379,7 @@ class MicroscopyProcessingPipeline:
         """
         if merge_strategy is None:
             merge_strategy = self.merge_strategy
-            
+
         print(f"Merging registration channels: {merge_strategy}")
 
         merge_zarr_channels(
@@ -389,14 +420,21 @@ class MicroscopyProcessingPipeline:
         moving_reg_channel = reg_dir / f"{registration_name}_moving_registration.zarr"
 
         # Use configured registration channels
-        channel_a, channel_b = self.registration_channels[0], self.registration_channels[1]
-        
-        self.create_registration_channels(
-            fixed_round_data[channel_a], fixed_round_data[channel_b], str(fixed_reg_channel)
+        channel_a, channel_b = (
+            self.registration_channels[0],
+            self.registration_channels[1],
         )
 
         self.create_registration_channels(
-            moving_round_data[channel_a], moving_round_data[channel_b], str(moving_reg_channel)
+            fixed_round_data[channel_a],
+            fixed_round_data[channel_b],
+            str(fixed_reg_channel),
+        )
+
+        self.create_registration_channels(
+            moving_round_data[channel_a],
+            moving_round_data[channel_b],
+            str(moving_reg_channel),
         )
 
         # Step 2: Compute initial affine registration
@@ -482,7 +520,7 @@ class MicroscopyProcessingPipeline:
             downsample_for_segmentation = self.downsample_for_segmentation
         if upsample_results is None:
             upsample_results = self.upsample_results
-            
+
         seg_dir = Path(segmentation_output_dir)
         seg_dir.mkdir(parents=True, exist_ok=True)
 
@@ -491,7 +529,9 @@ class MicroscopyProcessingPipeline:
         # Step 1: Optionally downsample for efficient processing
         if downsample_for_segmentation:
             channel_name = self.segmentation_channel
-            downsampled_path = seg_dir / f"{segmentation_name}_{channel_name}_downsampled.zarr"
+            downsampled_path = (
+                seg_dir / f"{segmentation_name}_{channel_name}_downsampled.zarr"
+            )
 
             downsample_zarr_volume(
                 input_zarr_path=input_channel,
@@ -620,7 +660,6 @@ class MicroscopyProcessingPipeline:
             json.dump(state_with_config, f, indent=2, default=str)
 
         print(f"Pipeline state saved: {output_path}")
-
 
     def _get_timestamp(self) -> str:
         """Get current timestamp string."""
