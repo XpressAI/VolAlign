@@ -3,7 +3,7 @@
 Complete Microscopy Processing Pipeline Example
 
 This example demonstrates how to use the enhanced VolAlign package for
-processing multi-round microscopy data with better naming conventions.
+processing multi-round microscopy data with YAML configuration files.
 
 The pipeline includes:
 1. Data preparation (TIFF to Zarr conversion)
@@ -19,100 +19,94 @@ from VolAlign import MicroscopyProcessingPipeline
 
 
 def main():
-    # Configuration for the processing pipeline
-    config = {
-        'working_directory': './microscopy_processing_output',
-        'voxel_spacing': [0.2, 0.1625, 0.1625],  # z, y, x in microns
-        'downsample_factors': (4, 7, 7),  # z, y, x downsampling for registration
-        'block_size': [512, 512, 512],  # Processing block size
-        'cluster_config': {
-            "n_workers": 8,
-            "threads_per_worker": 1,
-            "memory_limit": '150GB',
-            'config': {
-                'distributed.nanny.pre-spawn-environ': {
-                    'MALLOC_TRIM_THRESHOLD_': 65536,
-                    'MKL_NUM_THREADS': 10,
-                    'OMP_NUM_THREADS': 10,
-                    'OPENBLAS_NUM_THREADS': 10,
-                },
-                'distributed.scheduler.worker-ttl': None
-            }
-        }
-    }
+    """Main pipeline example using YAML configuration."""
+    print("=== VolAlign Pipeline with YAML Configuration ===")
     
-    # Initialize the processing pipeline
-    pipeline = MicroscopyProcessingPipeline(config)
+    # Load pipeline from YAML configuration file (REQUIRED)
+    print("\n--- Loading from YAML configuration file ---")
+    try:
+        config_file = Path(__file__).parent.parent / "your_config.yaml"
+        
+        if not config_file.exists():
+            print(f"Configuration file not found: {config_file}")
+            print("Please ensure you have a valid YAML configuration file.")
+            print("You can use 'config_template.yaml' as a starting point.")
+            return
+        
+        pipeline = MicroscopyProcessingPipeline(str(config_file))
+        print(f"Pipeline loaded successfully from: {config_file}")
+        
+    except ValueError as e:
+        print(f"Configuration validation error: {e}")
+        print("Please check your YAML configuration file for missing required parameters.")
+        return
+    except Exception as e:
+        print(f"Error loading pipeline: {e}")
+        return
     
-    # Example data paths - replace with your actual data paths
-    round1_tiff_files = {
-        '405': '/path/to/round1_405nm.tif',
-        '488': '/path/to/round1_488nm.tif',
-        'channel3': '/path/to/round1_channel3.tif',
-        'channel4': '/path/to/round1_channel4.tif'
-    }
-    
-    round2_tiff_files = {
-        '405': '/path/to/round2_405nm.tif',
-        '488': '/path/to/round2_488nm.tif',
-        'channel3': '/path/to/round2_channel3.tif',
-        'channel4': '/path/to/round2_channel4.tif'
-    }
-    
-    print("=== Step 1: Data Preparation ===")
-    # Convert TIFF files to Zarr format for efficient processing
-    round1_zarr = pipeline.prepare_round_data('round1', round1_tiff_files)
-    round2_zarr = pipeline.prepare_round_data('round2', round2_tiff_files)
-    
-    print("Round 1 Zarr files:", round1_zarr)
-    print("Round 2 Zarr files:", round2_zarr)
-    
-    print("\n=== Step 2: Registration Workflow ===")
-    # Perform two-stage registration between rounds
-    registration_results = pipeline.run_registration_workflow(
-        fixed_round_data=round1_zarr,
-        moving_round_data=round2_zarr,
-        registration_output_dir='./registration_results',
-        registration_name='round1_to_round2'
-    )
-    
-    print("Registration results:", registration_results)
-    
-    print("\n=== Step 3: Nuclei Segmentation ===")
-    # Perform distributed nuclei segmentation on 405nm channel
-    segmentation_results = pipeline.run_segmentation_workflow(
-        input_405_channel=round1_zarr['405'],
-        segmentation_output_dir='./segmentation_results',
-        segmentation_name='round1_nuclei',
-        downsample_for_segmentation=True,
-        upsample_results=True
-    )
-    
-    print("Segmentation results:", segmentation_results)
-    print(f"Number of nuclei detected: {segmentation_results['num_objects']}")
-    
-    print("\n=== Step 4: Apply Registration to All Channels ===")
-    # Apply computed registration to all imaging channels
-    aligned_channels = pipeline.apply_registration_to_all_channels(
-        reference_round_data=round1_zarr,
-        target_round_data=round2_zarr,
-        deformation_field_path=registration_results['deformation_field'],
-        output_directory='./aligned_channels'
-    )
-    
-    print("Aligned channels:", aligned_channels)
-    
-    print("\n=== Step 5: Save Pipeline State and Generate Report ===")
-    # Save pipeline state for reproducibility
-    pipeline.save_pipeline_state('./pipeline_state.json')
-    
-    # Generate comprehensive processing report
-    report = pipeline.generate_processing_report('./processing_report.json')
-    
-    print("Processing complete!")
-    print(f"Total rounds processed: {report['pipeline_summary']['total_rounds_processed']}")
-    print(f"Total registrations: {report['pipeline_summary']['total_registrations']}")
-    print(f"Total segmentations: {report['pipeline_summary']['total_segmentations']}")
+    # Check if data is configured in YAML
+    if pipeline.rounds_data:
+        print("✓ Multi-round data found in configuration")
+        print(f"  - Reference round: {pipeline.reference_round}")
+        print(f"  - Available rounds: {list(pipeline.rounds_data.keys())}")
+        
+        # Option 1: Run complete pipeline automatically from config
+        print("\n=== Option 1: Complete Pipeline from Configuration ===")
+        print("Running complete pipeline using data from YAML configuration...")
+        
+        # Uncomment the following line to run the complete pipeline:
+        # results = pipeline.run_complete_pipeline_from_config()
+        # print("✓ Complete pipeline finished!")
+        
+        print("(Complete pipeline commented out - uncomment to run with real data)")
+        
+        # Option 2: Manual step-by-step processing
+        print("\n=== Option 2: Manual Step-by-Step Processing ===")
+        print("You can also run individual steps manually:")
+        
+        # Example of manual processing (commented out)
+        """
+        # Step 1: Process all rounds from config
+        processed_rounds = pipeline.process_all_rounds_from_config()
+        
+        # Step 2: Get reference round data
+        reference_round_zarr = processed_rounds[pipeline.reference_round]
+        
+        # Step 3: Run segmentation on reference round
+        segmentation_results = pipeline.run_segmentation_workflow(
+            input_channel=reference_round_zarr[pipeline.segmentation_channel],
+            segmentation_output_dir='./segmentation_results',
+            segmentation_name=f'{pipeline.reference_round}_nuclei'
+        )
+        
+        # Step 4: Register and align all other rounds
+        for round_name, round_zarr in processed_rounds.items():
+            if round_name == pipeline.reference_round:
+                continue
+                
+            # Run registration
+            registration_results = pipeline.run_registration_workflow(
+                fixed_round_data=reference_round_zarr,
+                moving_round_data=round_zarr,
+                registration_output_dir=f'./registration_{round_name}',
+                registration_name=f'{pipeline.reference_round}_to_{round_name}'
+            )
+            
+            # Apply registration to all channels
+            aligned_channels = pipeline.apply_registration_to_all_channels(
+                reference_round_data=reference_round_zarr,
+                target_round_data=round_zarr,
+                deformation_field_path=registration_results['deformation_field'],
+                output_directory=f'./aligned_{round_name}'
+            )
+        """
+        
+    else:
+        print("No multi-round data found in configuration")
+        print("Please ensure your YAML configuration includes the 'data' section with 'reference_round' and 'rounds'.")
+        print("See 'config_template.yaml' for the required structure.")
+        return
+
 
 
 def example_individual_functions():
@@ -188,7 +182,7 @@ def example_individual_functions():
 
 
 if __name__ == '__main__':
-    # Run the complete pipeline example
+    # Run the complete pipeline example with YAML configuration
     main()
     
     # Uncomment to run individual function examples

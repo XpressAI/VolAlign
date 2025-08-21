@@ -1,0 +1,83 @@
+# VolAlign Pipeline Configuration Template
+# This file contains all configurable parameters for the microscopy processing pipeline
+# Modify these values according to your specific dataset and processing requirements
+
+# Working directory for all pipeline outputs
+working_directory: "./pipeline_output"
+
+# Voxel spacing in micrometers [z, y, x]
+# Adjust these values based on your microscope settings
+voxel_spacing: [0.2, 0.1625, 0.1625]
+
+# Downsample factors for efficient processing [z, y, x]
+# Higher values = faster processing but lower resolution
+downsample_factors: [4, 7, 7]
+
+# Block size for distributed processing [z, y, x]
+# Adjust based on available memory and data size
+block_size: [512, 512, 512]
+
+# Multi-round data configuration
+data:
+  # Reference round name - this round will be used as the fixed reference for all alignments
+  # and will be the source for segmentation
+  reference_round: "round1"
+  
+  # Data paths for each imaging round
+  # Each round should contain the same channel names
+  rounds:
+    round1:
+      "405": "/path/to/round1_405nm.tif"
+      "488": "/path/to/round1_488nm.tif"
+      "channel3": "/path/to/round1_channel3.tif"
+      "channel4": "/path/to/round1_channel4.tif"
+    
+    round2:
+      "405": "/path/to/round2_405nm.tif"
+      "488": "/path/to/round2_488nm.tif"
+      "channel3": "/path/to/round2_channel3.tif"
+      "channel4": "/path/to/round2_channel4.tif"
+    
+    round3:
+      "405": "/path/to/round3_405nm.tif"
+      "488": "/path/to/round3_488nm.tif"
+      "channel3": "/path/to/round3_channel3.tif"
+      "channel4": "/path/to/round3_channel4.tif"
+    
+    # Add more rounds as needed...
+    # round4:
+    #   "405": "/path/to/round4_405nm.tif"
+    #   "488": "/path/to/round4_488nm.tif"
+    #   "channel3": "/path/to/round4_channel3.tif"
+    #   "channel4": "/path/to/round4_channel4.tif"
+
+# Registration configuration
+registration:
+  # Strategy for merging channels: "mean", "max", or "stack"
+  merge_strategy: "mean"
+  
+  # Channels to use for registration (typically DAPI channels)
+  # First channel is used as reference for alignment
+  channels: ["405", "488"]
+
+# Segmentation configuration
+segmentation:
+  # Channel to use for nuclei segmentation (typically DAPI)
+  channel: "405"
+  
+  # Whether to downsample data before segmentation for speed
+  downsample_for_processing: true
+  
+  # Whether to upsample segmentation results back to original resolution
+  upsample_results: true
+
+# Distributed computing cluster configuration
+cluster_config:
+  # Number of worker processes
+  n_workers: 8
+  
+  # Number of threads per worker
+  threads_per_worker: 1
+  
+  # Memory limit per worker (e.g., "150GB", "32GB")
+  memory_limit: "150GB"

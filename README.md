@@ -102,57 +102,81 @@ except ImportError:
 
 ## Quick Start
 
+### Configuration Setup
+
+VolAlign now uses YAML configuration files for streamlined pipeline setup. First, create your configuration file:
+
+```bash
+# Copy the template configuration
+cp config_template.yaml my_config.yaml
+
+# Edit the configuration file with your specific paths and parameters
+nano my_config.yaml  # or use your preferred editor
+```
+
 ### Complete Pipeline Example
 
 ```python
 from VolAlign import MicroscopyProcessingPipeline
 
-# Configure the pipeline
-config = {
-    'working_directory': './processing_output',
-    'voxel_spacing': [0.2, 0.1625, 0.1625],  # z, y, x in microns
-    'downsample_factors': (4, 7, 7),
-    'block_size': [512, 512, 512]
-}
+# Initialize pipeline with YAML configuration file path
+pipeline = MicroscopyProcessingPipeline('my_config.yaml')
 
-# Initialize pipeline
-pipeline = MicroscopyProcessingPipeline(config)
+# Run the complete multi-round processing pipeline
+results = pipeline.run_complete_pipeline_from_config()
 
-# Prepare data (TIFF to Zarr conversion)
-round1_zarr = pipeline.prepare_round_data('round1', {
-    '405': '/path/to/round1_405nm.tif',
-    '488': '/path/to/round1_488nm.tif',
-    'channel3': '/path/to/round1_channel3.tif'
-})
+# The pipeline will automatically:
+# 1. Convert all TIFF files to Zarr format
+# 2. Register all rounds to the reference round
+# 3. Perform nuclei segmentation on the reference round
+# 4. Apply registration transformations to all channels
+# 5. Generate comprehensive reports and summaries
 
-round2_zarr = pipeline.prepare_round_data('round2', {
-    '405': '/path/to/round2_405nm.tif',
-    '488': '/path/to/round2_488nm.tif',
-    'channel3': '/path/to/round2_channel3.tif'
-})
+print("Pipeline completed successfully!")
+print(f"Results saved to: {pipeline.working_directory}")
+```
 
-# Run registration workflow
-registration_results = pipeline.run_registration_workflow(
-    fixed_round_data=round1_zarr,
-    moving_round_data=round2_zarr,
-    registration_output_dir='./registration',
-    registration_name='round1_to_round2'
-)
+### Manual Step-by-Step Processing
 
-# Run segmentation workflow
+For more control over individual steps:
+
+```python
+from VolAlign import MicroscopyProcessingPipeline
+
+# Initialize pipeline with YAML configuration file
+pipeline = MicroscopyProcessingPipeline('my_config.yaml')
+
+# Step 1: Process all rounds from configuration
+all_round_data = pipeline.process_all_rounds_from_config()
+
+# Step 2: Run registration for each round against reference
+reference_round = pipeline.reference_round
+registration_results = {}
+
+for round_name in pipeline.rounds_data.keys():
+    if round_name != reference_round:
+        registration_results[round_name] = pipeline.run_registration_workflow(
+            fixed_round_data=all_round_data[reference_round],
+            moving_round_data=all_round_data[round_name],
+            registration_output_dir=f"{pipeline.working_directory}/registration",
+            registration_name=f"{reference_round}_to_{round_name}"
+        )
+
+# Step 3: Run segmentation on reference round
 segmentation_results = pipeline.run_segmentation_workflow(
-    input_405_channel=round1_zarr['405'],
-    segmentation_output_dir='./segmentation',
-    segmentation_name='round1_nuclei'
+    input_channel=all_round_data[reference_round][pipeline.segmentation_channel],
+    segmentation_output_dir=f"{pipeline.working_directory}/segmentation",
+    segmentation_name=f"{reference_round}_nuclei"
 )
 
-# Apply registration to all channels
-aligned_channels = pipeline.apply_registration_to_all_channels(
-    reference_round_data=round1_zarr,
-    target_round_data=round2_zarr,
-    deformation_field_path=registration_results['deformation_field'],
-    output_directory='./aligned_channels'
-)
+# Step 4: Apply registration to all channels
+for round_name, reg_results in registration_results.items():
+    aligned_channels = pipeline.apply_registration_to_all_channels(
+        reference_round_data=all_round_data[reference_round],
+        target_round_data=all_round_data[round_name],
+        deformation_field_path=reg_results['deformation_field'],
+        output_directory=f"{pipeline.working_directory}/aligned_channels/{round_name}"
+    )
 ```
 
 ### Individual Function Usage
