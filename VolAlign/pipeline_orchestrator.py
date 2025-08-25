@@ -14,6 +14,11 @@ from .distributed_processing import (
     create_registration_summary,
     distributed_nuclei_segmentation,
 )
+from .step_tracker import (
+    PipelineStepManager,
+    generate_extended_config_from_original,
+    load_extended_config_if_exists,
+)
 from .utils import (
     convert_tiff_to_zarr,
     convert_zarr_to_tiff,
@@ -32,12 +37,13 @@ class MicroscopyProcessingPipeline:
     including registration, segmentation, and channel processing.
     """
 
-    def __init__(self, config_file: str):
+    def __init__(self, config_file: str, enable_step_tracking: bool = True):
         """
         Initialize the processing pipeline with YAML configuration file.
 
         Args:
-            config_file (str): Path to YAML configuration file
+            config_file (str): Path to YAML configuration file (original template)
+            enable_step_tracking (bool): Enable step tracking functionality
 
         Raises:
             ValueError: If required configuration parameters are missing
@@ -48,11 +54,20 @@ class MicroscopyProcessingPipeline:
         # Validate and extract required parameters
         self._validate_and_extract_config()
 
-        # Pipeline state tracking
+        # NEW: Step tracking initialization
+        self.enable_step_tracking = enable_step_tracking
+        if enable_step_tracking:
+            self.extended_config = self._initialize_extended_config()
+            self.step_manager = PipelineStepManager(
+                self.extended_config, str(self.working_directory)
+            )
+
+        # Pipeline state tracking (enhanced)
         self.pipeline_state = {
             "rounds_processed": [],
             "registration_pairs": [],
             "segmentation_results": [],
+            "step_execution": {},  # NEW: Step execution tracking
         }
 
     def _validate_and_extract_config(self):
@@ -172,6 +187,23 @@ class MicroscopyProcessingPipeline:
 
         self.cluster_config = cluster_config
 
+    def _initialize_extended_config(self) -> Dict[str, Any]:
+        """Initialize extended config with step tracking."""
+        # Check if extended config already exists in working directory
+        existing_config = load_extended_config_if_exists(str(self.working_directory))
+
+        if existing_config:
+            print(
+                f"Loading existing extended config from: {self.working_directory}/extended_config.yaml"
+            )
+            return existing_config
+        else:
+            print("Generating new extended config with step tracking")
+            extended_config = generate_extended_config_from_original(
+                self.config, str(self.working_directory)
+            )
+            return extended_config
+
     @staticmethod
     def load_config_from_yaml(config_file: str) -> Dict[str, Any]:
         """
@@ -223,17 +255,293 @@ class MicroscopyProcessingPipeline:
     def run_complete_pipeline_from_config(self) -> Dict[str, Any]:
         """
         Run the complete pipeline using configuration data.
-
-        This method:
-        1. Processes all rounds from config
-        2. Runs registration between reference round and all other rounds
-        3. Runs segmentation on reference round
-        4. Applies registration to all channels
-        5. Generates reports
+        Now includes step tracking and resume capabilities.
 
         Returns:
             Dict[str, Any]: Complete pipeline results
         """
+        if self.enable_step_tracking:
+            return self._run_pipeline_with_step_tracking()
+        else:
+            # Original implementation (unchanged)
+            return self._run_original_pipeline()
+
+    def _run_pipeline_with_step_tracking(self) -> Dict[str, Any]:
+        """Run complete pipeline with step-by-step tracking."""
+        # 1. Check for existing progress
+        if self.step_manager.has_previous_progress():
+            print(
+                "Previous pipeline execution detected - resuming from last checkpoint"
+            )
+            return self._resume_pipeline()
+
+        # 2. Start fresh pipeline with step tracking
+        print("Starting new pipeline with step tracking")
+        print(
+            f"Extended config saved to: {self.working_directory}/extended_config.yaml"
+        )
+
+        # Mark pipeline as started
+        self.extended_config["step_execution"]["timestamps"][
+            "pipeline_started"
+        ] = self._get_timestamp()
+        self.step_manager.save_current_state()
+
+        return self._execute_pipeline_steps()
+
+    def _execute_pipeline_steps(self) -> Dict[str, Any]:
+        """Execute pipeline steps in order with validation and tracking."""
+        results = {
+            "processed_rounds": {},
+            "registrations": {},
+            "segmentation": {},
+            "aligned_channels": {},
+            "step_execution_log": [],
+        }
+
+        # Get execution order from extended config
+        execution_order = self.extended_config["pipeline_steps"]["execution_order"]
+
+        for phase in execution_order:
+            print(f"\n=== Executing Phase: {phase} ===")
+            phase_result = self._execute_phase(phase)
+            results[phase] = phase_result
+
+            # Update phase status and save state
+            self._update_phase_status(phase, "completed")
+            self.step_manager.save_current_state()
+
+        # Mark pipeline as completed
+        self.extended_config["step_execution"]["timestamps"][
+            "pipeline_completed"
+        ] = self._get_timestamp()
+        self.step_manager.save_current_state()
+
+        # Generate final report
+        self._finalize_pipeline_execution(results)
+        return results
+
+    def _execute_phase(self, phase: str) -> Dict[str, Any]:
+        """Execute all substeps in a phase."""
+        phase_config = self.extended_config["pipeline_steps"]["steps"][phase]
+        phase_results = {}
+
+        # Validate phase dependencies
+        if not self._validate_phase_prerequisites(phase):
+            raise RuntimeError(f"Prerequisites not met for phase: {phase}")
+
+        # Execute substeps
+        for substep_id, substep_config in phase_config["substeps"].items():
+            print(f"  Executing substep: {substep_id}")
+
+            # Validate substep prerequisites
+            valid, missing_deps = self.step_manager.validate_step_prerequisites(
+                substep_id
+            )
+            if not valid:
+                raise RuntimeError(
+                    f"Prerequisites not met for step: {substep_id}. Missing: {missing_deps}"
+                )
+
+            # Update status to in_progress and save
+            self.step_manager.update_step_status(substep_id, "in_progress")
+
+            try:
+                # Execute the substep
+                substep_result = self._execute_substep(substep_id, substep_config)
+                phase_results[substep_id] = substep_result
+
+                # Validate outputs
+                if self._validate_substep_outputs(substep_id, substep_config):
+                    self.step_manager.update_step_status(
+                        substep_id,
+                        "completed",
+                        outputs=substep_config.get("expected_outputs", []),
+                    )
+                    print(f"{substep_id} completed successfully")
+                else:
+                    raise RuntimeError(f"Output validation failed for {substep_id}")
+
+            except Exception as e:
+                self.step_manager.update_step_status(substep_id, "failed", error=str(e))
+                print(f"{substep_id} failed: {e}")
+                raise
+
+        return phase_results
+
+    def _execute_substep(self, substep_id: str, substep_config: Dict[str, Any]) -> Any:
+        """Execute a single substep by calling the appropriate function."""
+        function_name = substep_config["function_call"]
+        function_args = substep_config.get("function_args", {})
+
+        # Resolve any variable references in function_args
+        resolved_args = self._resolve_function_args(function_args)
+
+        # Call the appropriate method
+        if hasattr(self, function_name):
+            method = getattr(self, function_name)
+            return method(**resolved_args)
+        else:
+            raise RuntimeError(f"Unknown function: {function_name}")
+
+    def _resolve_function_args(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve variable references in function arguments."""
+        resolved = {}
+
+        for key, value in args.items():
+            if (
+                isinstance(value, str)
+                and value.startswith("${")
+                and value.endswith("}")
+            ):
+                # This is a variable reference - for now, pass through as-is
+                # In a full implementation, you'd resolve these references
+                resolved[key] = value
+            else:
+                resolved[key] = value
+
+        return resolved
+
+    def _validate_substep_outputs(
+        self, substep_id: str, substep_config: Dict[str, Any]
+    ) -> bool:
+        """Validate that substep outputs exist and are valid."""
+        expected_outputs = substep_config.get("expected_outputs", [])
+
+        for output_path in expected_outputs:
+            full_path = self.working_directory / output_path
+            if not full_path.exists():
+                print(f"    Missing expected output: {full_path}")
+                return False
+
+            # Additional validation based on file type
+            if not self._validate_file_integrity(full_path):
+                print(f"    Invalid file: {full_path}")
+                return False
+
+        return True
+
+    def _validate_file_integrity(self, file_path: Path) -> bool:
+        """Validate file integrity based on file type."""
+        try:
+            if file_path.suffix == ".zarr":
+                # Validate Zarr file
+                zarr.open(str(file_path), mode="r")
+                return True
+            elif file_path.suffix == ".json":
+                # Validate JSON file
+                with open(file_path, "r") as f:
+                    json.load(f)
+                return True
+            elif file_path.suffix == ".txt":
+                # Basic text file validation
+                return file_path.stat().st_size > 0
+            else:
+                # For other files, just check if they exist and have size > 0
+                return file_path.stat().st_size > 0
+        except Exception:
+            return False
+
+    def _validate_phase_prerequisites(self, phase_name: str) -> bool:
+        """Check if phase dependencies are satisfied."""
+        phase_config = self.extended_config["pipeline_steps"]["steps"][phase_name]
+        dependencies = phase_config.get("dependencies", [])
+
+        for dep_phase in dependencies:
+            # Check if all substeps in dependency phase are completed
+            dep_phase_config = self.extended_config["pipeline_steps"]["steps"][
+                dep_phase
+            ]
+            dep_substeps = dep_phase_config.get("substeps", {})
+
+            for substep_config in dep_substeps.values():
+                if substep_config.get("status") != "completed":
+                    return False
+
+        return True
+
+    def _update_phase_status(self, phase_name: str, status: str) -> None:
+        """Update the status of a phase."""
+        self.extended_config["pipeline_steps"]["steps"][phase_name]["status"] = status
+
+    def _resume_pipeline(self) -> Dict[str, Any]:
+        """Resume pipeline from last completed step."""
+        print("Resuming pipeline from last checkpoint...")
+
+        # Get next steps to execute
+        next_steps = self.step_manager.get_next_steps_to_execute()
+
+        if not next_steps:
+            print("Pipeline already completed!")
+            return self.step_manager.get_final_results()
+
+        print(f"Resuming from step: {next_steps[0]}")
+
+        # Continue execution from where we left off
+        return self._execute_remaining_steps(next_steps)
+
+    def _execute_remaining_steps(self, remaining_steps: List[str]) -> Dict[str, Any]:
+        """Execute remaining steps in the pipeline."""
+        results = {
+            "processed_rounds": {},
+            "registrations": {},
+            "segmentation": {},
+            "aligned_channels": {},
+            "step_execution_log": [],
+        }
+
+        # Group remaining steps by phase and execute
+        phases_to_execute = set()
+        for step_id in remaining_steps:
+            for phase_name, phase_config in self.extended_config["pipeline_steps"][
+                "steps"
+            ].items():
+                if step_id in phase_config.get("substeps", {}):
+                    phases_to_execute.add(phase_name)
+                    break
+
+        # Execute phases in order
+        execution_order = self.extended_config["pipeline_steps"]["execution_order"]
+        for phase in execution_order:
+            if phase in phases_to_execute:
+                print(f"\n=== Resuming Phase: {phase} ===")
+                phase_result = self._execute_phase(phase)
+                results[phase] = phase_result
+
+                self._update_phase_status(phase, "completed")
+                self.step_manager.save_current_state()
+
+        # Mark pipeline as completed
+        self.extended_config["step_execution"]["timestamps"][
+            "pipeline_completed"
+        ] = self._get_timestamp()
+        self.step_manager.save_current_state()
+
+        self._finalize_pipeline_execution(results)
+        return results
+
+    def _finalize_pipeline_execution(self, results: Dict[str, Any]) -> None:
+        """Finalize pipeline execution with reports."""
+        print("\n=== Finalizing Pipeline Execution ===")
+
+        # Save pipeline state
+        state_path = self.working_directory / "pipeline_state.json"
+        self.save_pipeline_state(str(state_path))
+
+        # Generate processing report
+        report_path = self.working_directory / "processing_report.json"
+        report = self.generate_processing_report(str(report_path))
+        results["report"] = report
+
+        print(f"Pipeline completed successfully!")
+        progress = self.step_manager.get_progress_report()
+        print(
+            f"Completed: {progress['completed_steps']}/{progress['total_steps']} steps"
+        )
+        print(f"Results saved to: {self.working_directory}")
+
+    def _run_original_pipeline(self) -> Dict[str, Any]:
+        """Run original pipeline implementation without step tracking."""
         if not self.rounds_data:
             raise ValueError(
                 "No rounds data found in configuration. Please specify data.rounds in your YAML config."
@@ -695,3 +1003,31 @@ class MicroscopyProcessingPipeline:
 
         print(f"Processing report generated: {output_path}")
         return report
+
+    def get_pipeline_progress(self) -> Dict[str, Any]:
+        """Get current pipeline progress information."""
+        if not self.enable_step_tracking:
+            return {"message": "Step tracking not enabled"}
+
+        return self.step_manager.get_progress_report()
+
+    def print_progress_summary(self) -> None:
+        """Print human-readable progress summary."""
+        if not self.enable_step_tracking:
+            print("Step tracking not enabled")
+            return
+
+        progress = self.get_pipeline_progress()
+        print(f"\n=== Pipeline Progress Summary ===")
+        print(f"Overall Progress: {progress['percentage_complete']:.1f}%")
+        print(
+            f"Completed Steps: {progress['completed_steps']}/{progress['total_steps']}"
+        )
+        print(f"Current Phase: {progress.get('current_phase', 'Not started')}")
+        print(f"Current Step: {progress.get('current_step', 'None')}")
+
+        if progress.get("remaining_steps"):
+            print(f"Remaining Steps: {len(progress['remaining_steps'])}")
+            print("Next steps to execute:")
+            for step in progress["remaining_steps"][:3]:  # Show next 3 steps
+                print(f"  - {step['id']}: {step['description']}")
