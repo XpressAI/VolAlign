@@ -22,54 +22,67 @@ New features:
 import os
 from pathlib import Path
 
-from VolAlign import MicroscopyProcessingPipeline, generate_extended_config_from_original, load_extended_config_if_exists
 import yaml
+
+from VolAlign import (
+    MicroscopyProcessingPipeline,
+    generate_extended_config_from_original,
+    load_extended_config_if_exists,
+)
 
 
 def main():
     """Main pipeline example using YAML configuration with step tracking."""
     print("=== VolAlign Pipeline with YAML Configuration and Step Tracking ===")
-    
+
     # Load pipeline from YAML configuration file (REQUIRED)
     print("\n--- Loading from YAML configuration file ---")
     try:
         config_file = Path(__file__).parent.parent / "config_template.yaml"
-        
+
         if not config_file.exists():
             print(f"Configuration file not found: {config_file}")
             print("Please ensure you have a valid YAML configuration file.")
             print("You can use 'config_template.yaml' as a starting point.")
             return
-        
+
         # Initialize pipeline with step tracking enabled (default)
-        pipeline = MicroscopyProcessingPipeline(str(config_file), enable_step_tracking=True)
+        pipeline = MicroscopyProcessingPipeline(
+            str(config_file), enable_step_tracking=True
+        )
         print(f"Pipeline loaded successfully from: {config_file}")
         print(f"Step tracking enabled: {pipeline.enable_step_tracking}")
         print(f"Working directory: {pipeline.working_directory}")
-        
+
         # Check if extended config was generated or loaded
-        if hasattr(pipeline, 'extended_config'):
-            print(f"Extended config available with {len(pipeline.extended_config['pipeline_steps']['steps'])} phases")
-            print(f"Extended config saved to: {pipeline.working_directory}/extended_config.yaml")
-        
+        if hasattr(pipeline, "extended_config"):
+            print(
+                f"Extended config available with {len(pipeline.extended_config['pipeline_steps']['steps'])} phases"
+            )
+            print(
+                f"Extended config saved to: {pipeline.working_directory}/extended_config.yaml"
+            )
+
     except ValueError as e:
         print(f"Configuration validation error: {e}")
-        print("Please check your YAML configuration file for missing required parameters.")
+        print(
+            "Please check your YAML configuration file for missing required parameters."
+        )
         return
     except Exception as e:
         print(f"Error loading pipeline: {e}")
         return
-    
+
     # Check if data is configured in YAML
     if pipeline.rounds_data:
         print(" Multi-round data found in configuration")
         print(f"  - Reference round: {pipeline.reference_round}")
         print(f"  - Available rounds: {list(pipeline.rounds_data.keys())}")
-        
+
         # Show current progress if any
         print("\n--- Current Pipeline Progress ---")
         pipeline.print_progress_summary()
-        
+
         # Option 1: Run complete pipeline automatically from config with step tracking
         print("\n=== Option 1: Complete Pipeline with Step Tracking ===")
         print("Running complete pipeline using data from YAML configuration...")
@@ -78,7 +91,7 @@ def main():
         print("   Resume capability if interrupted")
         print("   Extended config generation and persistence")
         print("   Output validation for each step")
-        
+
         # Uncomment the following lines to run the complete pipeline:
         """
         try:
@@ -97,27 +110,31 @@ def main():
             print("Progress at failure:")
             pipeline.print_progress_summary()
         """
-        
+
         print("(Complete pipeline commented out - uncomment to run with real data)")
-        
+
         # Option 2: Manual step-by-step processing with step tracking
         print("\n=== Option 2: Manual Step-by-Step Processing with Step Tracking ===")
-        print("You can also run individual steps manually while maintaining step tracking:")
-        
+        print(
+            "You can also run individual steps manually while maintaining step tracking:"
+        )
+
         # Show how to do manual processing with step tracking
         manual_processing_with_step_tracking_example(pipeline)
-        
+
         # Option 3: Resume interrupted pipeline
         print("\n=== Option 3: Resume Interrupted Pipeline ===")
         resume_pipeline_example(pipeline)
-        
+
         # Option 4: Monitor progress without running
         print("\n=== Option 4: Monitor Pipeline Progress ===")
         monitor_progress_example(pipeline)
-        
+
     else:
         print("No multi-round data found in configuration")
-        print("Please ensure your YAML configuration includes the 'data' section with 'reference_round' and 'rounds'.")
+        print(
+            "Please ensure your YAML configuration includes the 'data' section with 'reference_round' and 'rounds'."
+        )
         print("See 'config_template.yaml' for the required structure.")
         return
 
@@ -129,7 +146,7 @@ def manual_processing_with_step_tracking_example(pipeline):
     print("   Output validation")
     print("   Error handling and recovery")
     print("   State persistence")
-    
+
     # Example of manual processing with step tracking (commented out)
     """
     try:
@@ -189,7 +206,7 @@ def manual_processing_with_step_tracking_example(pipeline):
             print("Progress at failure:")
             pipeline.print_progress_summary()
     """
-    
+
     print("(Manual processing example commented out - uncomment to run with real data)")
 
 
@@ -200,15 +217,19 @@ def resume_pipeline_example(pipeline):
     print("   Validates completed steps")
     print("   Continues from next pending step")
     print("   Maintains all state information")
-    
+
     # Check if there's previous progress
     if pipeline.enable_step_tracking:
         progress = pipeline.get_pipeline_progress()
-        if progress.get('completed_steps', 0) > 0:
-            print(f"Previous progress detected: {progress['completed_steps']}/{progress['total_steps']} steps completed")
+        if progress.get("completed_steps", 0) > 0:
+            print(
+                f"Previous progress detected: {progress['completed_steps']}/{progress['total_steps']} steps completed"
+            )
             print("To resume, simply call:")
             print("  results = pipeline.run_complete_pipeline_from_config()")
-            print("The pipeline will automatically resume from the last completed step.")
+            print(
+                "The pipeline will automatically resume from the last completed step."
+            )
         else:
             print("No previous progress found - pipeline will start from the beginning")
     else:
@@ -218,28 +239,28 @@ def resume_pipeline_example(pipeline):
 def monitor_progress_example(pipeline):
     """Example of monitoring pipeline progress."""
     print("Progress monitoring provides detailed information:")
-    
+
     if pipeline.enable_step_tracking:
         progress = pipeline.get_pipeline_progress()
-        
+
         print(f"  • Total steps: {progress.get('total_steps', 0)}")
         print(f"  • Completed steps: {progress.get('completed_steps', 0)}")
         print(f"  • Progress: {progress.get('percentage_complete', 0):.1f}%")
         print(f"  • Current phase: {progress.get('current_phase', 'Not started')}")
         print(f"  • Failed steps: {len(progress.get('failed_steps', []))}")
-        
+
         # Show remaining steps
-        remaining = progress.get('remaining_steps', [])
+        remaining = progress.get("remaining_steps", [])
         if remaining:
             print(f"  • Next {min(3, len(remaining))} steps:")
             for step in remaining[:3]:
                 print(f"    - {step['id']}: {step['description']}")
-        
+
         # Show extended config location
         print(f"  • Extended config: {pipeline.working_directory}/extended_config.yaml")
-        
+
         # Show timestamps if available
-        timestamps = progress.get('timestamps', {})
+        timestamps = progress.get("timestamps", {})
         if any(timestamps.values()):
             print("  • Timestamps:")
             for key, value in timestamps.items():
@@ -252,166 +273,185 @@ def monitor_progress_example(pipeline):
 def create_extended_config_example():
     """Example of manually creating an extended config from the original template."""
     print("\n=== Example: Creating Extended Config Manually ===")
-    
+
     config_file = Path(__file__).parent.parent / "config_template.yaml"
     working_dir = "./example_output"
-    
+
     if not config_file.exists():
         print(f"Configuration file not found: {config_file}")
         return
-    
+
     try:
         # Load the original config
-        with open(config_file, 'r') as f:
+        with open(config_file, "r") as f:
             original_config = yaml.safe_load(f)
-        
+
         print(f" Original config loaded from: {config_file}")
         print(f"  - Reference round: {original_config['data']['reference_round']}")
         print(f"  - Available rounds: {list(original_config['data']['rounds'].keys())}")
-        
+
         # Check if extended config already exists
         existing_config = load_extended_config_if_exists(working_dir)
-        
+
         if existing_config:
-            print(f" Extended config already exists in: {working_dir}/extended_config.yaml")
+            print(
+                f" Extended config already exists in: {working_dir}/extended_config.yaml"
+            )
             print("  - Loading existing extended config...")
             extended_config = existing_config
         else:
             print(" Creating new extended config...")
             # Generate extended config manually
-            extended_config = generate_extended_config_from_original(original_config, working_dir)
-            print(f" Extended config created and saved to: {working_dir}/extended_config.yaml")
-        
+            extended_config = generate_extended_config_from_original(
+                original_config, working_dir
+            )
+            print(
+                f" Extended config created and saved to: {working_dir}/extended_config.yaml"
+            )
+
         # Show extended config details
-        pipeline_steps = extended_config['pipeline_steps']
+        pipeline_steps = extended_config["pipeline_steps"]
         print(f"  - Pipeline phases: {len(pipeline_steps['steps'])}")
         print(f"  - Execution order: {pipeline_steps['execution_order']}")
-        
+
         # Count total substeps
         total_substeps = 0
-        for phase_name, phase_config in pipeline_steps['steps'].items():
-            substeps = phase_config.get('substeps', {})
+        for phase_name, phase_config in pipeline_steps["steps"].items():
+            substeps = phase_config.get("substeps", {})
             total_substeps += len(substeps)
-            print(f"    • {phase_name}: {len(substeps)} substeps - {phase_config['description']}")
-        
+            print(
+                f"    • {phase_name}: {len(substeps)} substeps - {phase_config['description']}"
+            )
+
         print(f"  - Total substeps: {total_substeps}")
-        
+
         # Show step execution metadata
-        step_execution = extended_config['step_execution']
-        print(f"  - Progress tracking initialized: {step_execution['progress']['total_steps']} total steps")
-        
+        step_execution = extended_config["step_execution"]
+        print(
+            f"  - Progress tracking initialized: {step_execution['progress']['total_steps']} total steps"
+        )
+
         print("\nYou can now use this extended config with the pipeline:")
-        print("  pipeline = MicroscopyProcessingPipeline(config_file, enable_step_tracking=True)")
-        print("  # The pipeline will automatically load the extended config from the working directory")
-        
+        print(
+            "  pipeline = MicroscopyProcessingPipeline(config_file, enable_step_tracking=True)"
+        )
+        print(
+            "  # The pipeline will automatically load the extended config from the working directory"
+        )
+
     except Exception as e:
         print(f"✗ Error creating extended config: {e}")
         import traceback
+
         traceback.print_exc()
 
 
 def example_disable_step_tracking():
     """Example of running pipeline without step tracking (original behavior)."""
     print("\n=== Example: Pipeline without Step Tracking ===")
-    
+
     config_file = Path(__file__).parent.parent / "config_template.yaml"
-    
+
     # Initialize pipeline with step tracking disabled
-    pipeline = MicroscopyProcessingPipeline(str(config_file), enable_step_tracking=False)
-    
+    pipeline = MicroscopyProcessingPipeline(
+        str(config_file), enable_step_tracking=False
+    )
+
     print(f"Step tracking enabled: {pipeline.enable_step_tracking}")
     print("This runs the original pipeline implementation without step tracking.")
-    
+
     # Try to get progress (should return message about step tracking not enabled)
     progress = pipeline.get_pipeline_progress()
     print(f"Progress info: {progress}")
-    
+
     # The pipeline will run using the original implementation
     print("Pipeline will use original implementation when step tracking is disabled.")
-
 
 
 def example_individual_functions():
     """
     Example of using individual functions with better naming conventions.
-    
+
     This demonstrates how to use the new functions directly without the
     high-level pipeline orchestrator.
     """
-    from VolAlign import (compute_affine_registration,
-                          compute_deformation_field_registration,
-                          distributed_nuclei_segmentation,
-                          downsample_zarr_volume, merge_zarr_channels,
-                          upsample_segmentation_labels)
-    
+    from VolAlign import (
+        compute_affine_registration,
+        compute_deformation_field_registration,
+        distributed_nuclei_segmentation,
+        downsample_zarr_volume,
+        merge_zarr_channels,
+        upsample_segmentation_labels,
+    )
+
     print("\n=== Individual Function Examples ===")
-    
+
     # Example 1: Downsample a large Zarr volume
     print("1. Downsampling Zarr volume...")
     downsample_zarr_volume(
-        input_zarr_path='/path/to/large_volume.zarr',
-        output_zarr_path='/path/to/downsampled_volume.zarr',
+        input_zarr_path="/path/to/large_volume.zarr",
+        output_zarr_path="/path/to/downsampled_volume.zarr",
         downsample_factors=(4, 7, 7),
-        chunk_size=50
+        chunk_size=50,
     )
-    
+
     # Example 2: Merge registration channels
     print("2. Merging registration channels...")
     merge_zarr_channels(
-        channel_a_path='/path/to/405nm.zarr',
-        channel_b_path='/path/to/488nm.zarr',
-        output_path='/path/to/merged_registration.zarr',
-        merge_strategy='mean'
+        channel_a_path="/path/to/405nm.zarr",
+        channel_b_path="/path/to/488nm.zarr",
+        output_path="/path/to/merged_registration.zarr",
+        merge_strategy="mean",
     )
-    
+
     # Example 3: Compute affine registration (replaces "initial" alignment)
     print("3. Computing affine registration...")
     affine_matrix = compute_affine_registration(
-        fixed_volume_path='/path/to/fixed.zarr',
-        moving_volume_path='/path/to/moving.zarr',
+        fixed_volume_path="/path/to/fixed.zarr",
+        moving_volume_path="/path/to/moving.zarr",
         voxel_spacing=[0.2, 0.1625, 0.1625],
-        output_matrix_path='/path/to/affine_matrix.txt'
+        output_matrix_path="/path/to/affine_matrix.txt",
     )
-    
+
     # Example 4: Compute deformation field (replaces "final" alignment)
     print("4. Computing deformation field registration...")
     aligned_path = compute_deformation_field_registration(
-        fixed_zarr_path='/path/to/fixed.zarr',
-        moving_zarr_path='/path/to/moving.zarr',
-        affine_matrix_path='/path/to/affine_matrix.txt',
-        output_directory='/path/to/output',
-        output_name='registration_result',
-        voxel_spacing=[0.2, 0.1625, 0.1625]
+        fixed_zarr_path="/path/to/fixed.zarr",
+        moving_zarr_path="/path/to/moving.zarr",
+        affine_matrix_path="/path/to/affine_matrix.txt",
+        output_directory="/path/to/output",
+        output_name="registration_result",
+        voxel_spacing=[0.2, 0.1625, 0.1625],
     )
-    
+
     # Example 5: Distributed nuclei segmentation
     print("5. Running distributed nuclei segmentation...")
     segments, boxes = distributed_nuclei_segmentation(
-        input_zarr_path='/path/to/405nm_channel.zarr',
-        output_zarr_path='/path/to/segmentation_masks.zarr',
-        model_type='cpsam'
+        input_zarr_path="/path/to/405nm_channel.zarr",
+        output_zarr_path="/path/to/segmentation_masks.zarr",
+        model_type="cpsam",
     )
-    
+
     # Example 6: Upsample segmentation labels
     print("6. Upsampling segmentation labels...")
     upsample_segmentation_labels(
-        input_zarr_path='/path/to/downsampled_masks.zarr',
-        output_zarr_path='/path/to/fullres_masks.zarr',
-        upsample_factors=(4, 7, 7)
+        input_zarr_path="/path/to/downsampled_masks.zarr",
+        output_zarr_path="/path/to/fullres_masks.zarr",
+        upsample_factors=(4, 7, 7),
     )
-    
+
     print("Individual function examples complete!")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Run the complete pipeline example with YAML configuration and step tracking
     main()
-    
+
     # Uncomment to create extended config manually
     # create_extended_config_example()
-    
+
     # Uncomment to run individual function examples
     # example_individual_functions()
-    
+
     # Uncomment to see example of pipeline without step tracking
     # example_disable_step_tracking()
