@@ -415,6 +415,10 @@ class PipelineStepManager:
 
         # Save updated config
         self.save_current_state()
+        
+        # Check if phase should be updated to completed
+        if status == "completed":
+            self._check_and_update_phase_status(step_id)
 
     def _update_progress(self) -> None:
         """Update progress statistics."""
@@ -561,3 +565,36 @@ class PipelineStepManager:
             "execution_log": self.extended_config["step_execution"]["execution_log"],
             "timestamps": self.extended_config["step_execution"]["timestamps"],
         }
+
+    def _check_and_update_phase_status(self, completed_step_id: str) -> None:
+        """Check if a phase should be marked as completed when a substep completes."""
+        # Find which phase this step belongs to
+        for phase_name, phase_config in self.extended_config["pipeline_steps"]["steps"].items():
+            substeps = phase_config.get("substeps", {})
+            if completed_step_id in substeps:
+                # Check if all substeps in this phase are completed
+                all_completed = True
+                for substep_id, substep_config in substeps.items():
+                    if substep_config.get("status") != "completed":
+                        all_completed = False
+                        break
+                
+                # Update phase status if all substeps are completed
+                if all_completed and phase_config.get("status") != "completed":
+                    print(f"🎉 All substeps in phase '{phase_name}' completed - updating phase status")
+                    phase_config["status"] = "completed"
+                    
+                    # Add phase completion to execution log
+                    log_entry = {
+                        "step_id": phase_name,
+                        "status": "completed",
+                        "timestamp": datetime.now().isoformat(),
+                        "phase": phase_name,
+                        "note": "Phase completed - all substeps finished"
+                    }
+                    self.extended_config["step_execution"]["execution_log"].append(log_entry)
+                    
+                    # Update last completed step to phase level
+                    self.extended_config["step_execution"]["last_completed_step"] = phase_name
+                
+                break

@@ -288,7 +288,7 @@ def distributed_nuclei_segmentation(
         }
 
     # Preprocessing function
-    def gaussian_preprocessing(image, sigma):
+    def gaussian_preprocessing(image, sigma, crop):
         return gaussian_filter(image, sigma)
 
     preprocessing_steps = [(gaussian_preprocessing, {"sigma": preprocessing_sigma})]
