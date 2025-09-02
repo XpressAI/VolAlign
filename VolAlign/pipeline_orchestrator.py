@@ -878,7 +878,6 @@ class MicroscopyProcessingPipeline:
         segmentation_results = {
             "input_channel": input_channel,
             "segmentation_masks": final_segmentation_path,
-            "bounding_boxes": bounding_boxes,
             "num_objects": len(bounding_boxes),
             "downsampled_input": (
                 str(downsampled_path) if downsample_for_segmentation else None
