@@ -1,6 +1,3 @@
-# PyTorch with CUDA 12.4 support from PyTorch index
---extra-index-url https://download.pytorch.org/whl/cu124
-
 # Main git-based dependencies - these take priority and pip will handle their sub-dependencies
 git+https://github.com/RuihanZhang2015/ExSeq-Toolbox.git
 git+https://github.com/mansouralawi/cellpose.git

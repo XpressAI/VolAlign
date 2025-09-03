@@ -17,19 +17,27 @@ dependencies = [
     "ExSeq-Toolbox @ git+https://github.com/RuihanZhang2015/ExSeq-Toolbox.git",
     "cellpose @ git+https://github.com/mansouralawi/cellpose.git",
     
-    # Version constraints for compatibility
-    "numpy<2.0.0",
-
     # Distributed processing dependencies (from cellpose distributed_deps)
-    "dask",
-    "distributed",
-    "dask_image",
-    "dask-cuda",
-    "pyyaml",
-    "zarr",
-    "dask_jobqueue",
-    "bokeh",
-    "pyarrow",
+    dask
+    distributed
+    dask_image
+    dask-cuda
+    pyyaml
+    zarr
+    dask_jobqueue
+    bokeh
+    pyarrow
+
+    # Version constraints for compatibility
+    numpy<2.0.0
+    cupy-cuda12x==12.3.0
+    cucim==23.10.0
+    ClusterWrap==1.0.3
+
+    # PyTorch with CUDA 12.4 support
+    torch==2.4.*
+    torchvision==0.19.*
+    torchaudio==2.4.*
     
     # Note: ExSeq-Toolbox will automatically install bigstream and nd2reader forks
     # All other dependencies will be automatically resolved by pip
