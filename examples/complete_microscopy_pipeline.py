@@ -190,6 +190,7 @@ def manual_processing_with_step_tracking_example(pipeline):
             aligned_channels = pipeline.apply_registration_to_all_channels(
                 reference_round_data=reference_round_zarr,
                 target_round_data=round_zarr,
+                affine_matrix_path=registration_results['affine_matrix'],
                 deformation_field_path=registration_results['deformation_field'],
                 output_directory=str(pipeline.working_directory / 'aligned' / round_name)
             )
@@ -430,6 +431,13 @@ def example_individual_functions():
         input_zarr_path="/path/to/405nm_channel.zarr",
         output_zarr_path="/path/to/segmentation_masks.zarr",
         model_type="cpsam",
+        segmentation_cluster_config={
+            "cluster_type": "local_cluster",
+            "n_workers": 3,
+            "threads_per_worker": 1,
+            "memory_limit": "300GB",
+            "use_local_cuda": True,
+        },
     )
 
     # Example 6: Upsample segmentation labels

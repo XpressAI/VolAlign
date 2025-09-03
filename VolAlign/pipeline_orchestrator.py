@@ -187,6 +187,20 @@ class MicroscopyProcessingPipeline:
 
         self.cluster_config = cluster_config
 
+        # Segmentation cluster configuration - optional, defaults to cluster_config if not provided
+        if "segmentation_cluster_config" in self.config:
+            segmentation_cluster_config = self.config["segmentation_cluster_config"]
+            # Validate required parameters for segmentation cluster config
+            for param in required_cluster_params:
+                if param not in segmentation_cluster_config:
+                    raise ValueError(
+                        f"Required parameter 'segmentation_cluster_config.{param}' missing from YAML configuration"
+                    )
+            self.segmentation_cluster_config = segmentation_cluster_config
+        else:
+            # Use regular cluster_config as fallback
+            self.segmentation_cluster_config = cluster_config.copy()
+
     def _initialize_extended_config(self) -> Dict[str, Any]:
         """Initialize extended config with step tracking."""
         # Check if extended config already exists in working directory
@@ -597,6 +611,7 @@ class MicroscopyProcessingPipeline:
             aligned_channels = self.apply_registration_to_all_channels(
                 reference_round_data=reference_round_zarr,
                 target_round_data=round_zarr,
+                affine_matrix_path=registration_results["affine_matrix"],
                 deformation_field_path=registration_results["deformation_field"],
                 output_directory=str(self.working_directory / "aligned" / round_name),
             )
@@ -857,7 +872,7 @@ class MicroscopyProcessingPipeline:
         segments, bounding_boxes = distributed_nuclei_segmentation(
             input_zarr_path=segmentation_input,
             output_zarr_path=str(segmentation_output),
-            cluster_config=self.cluster_config,
+            segmentation_cluster_config=self.segmentation_cluster_config,
             temporary_directory=str(seg_dir),
         )
 
@@ -902,6 +917,7 @@ class MicroscopyProcessingPipeline:
         self,
         reference_round_data: Dict[str, str],
         target_round_data: Dict[str, str],
+        affine_matrix_path: str,
         deformation_field_path: str,
         output_directory: str,
     ) -> Dict[str, str]:
@@ -911,6 +927,7 @@ class MicroscopyProcessingPipeline:
         Args:
             reference_round_data (Dict[str, str]): Reference round channel paths
             target_round_data (Dict[str, str]): Target round channel paths to align
+            affine_matrix_path (str): Path to computed affine transformation matrix
             deformation_field_path (str): Path to computed deformation field
             output_directory (str): Directory for aligned channel outputs
 
@@ -935,6 +952,7 @@ class MicroscopyProcessingPipeline:
         aligned_paths = apply_deformation_to_channels(
             reference_zarr_path=reference_round_data[reference_channel],
             channel_zarr_paths=target_channels,
+            affine_matrix_path=affine_matrix_path,
             deformation_field_path=deformation_field_path,
             output_directory=str(output_dir),
             voxel_spacing=self.voxel_spacing,

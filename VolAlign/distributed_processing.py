@@ -244,7 +244,7 @@ def distributed_nuclei_segmentation(
     model_type: str = "cpsam",
     block_size: Tuple[int, int, int] = (500, 1024, 1024),
     preprocessing_sigma: float = 2.0,
-    cluster_config: Optional[Dict] = None,
+    segmentation_cluster_config: Optional[Dict] = None,
     temporary_directory: Optional[str] = None,
 ) -> Tuple[Any, List]:
     """
@@ -259,7 +259,7 @@ def distributed_nuclei_segmentation(
         model_type (str): Cellpose model type ('cpsam', 'nuclei', etc.)
         block_size (Tuple[int, int, int]): Processing block size (z, y, x)
         preprocessing_sigma (float): Gaussian smoothing sigma for preprocessing
-        cluster_config (Optional[Dict]): Dask cluster configuration
+        segmentation_cluster_config (Optional[Dict]): Dask cluster configuration for segmentation
         temporary_directory (Optional[str]): Directory for temporary files
 
     Returns:
@@ -278,9 +278,10 @@ def distributed_nuclei_segmentation(
         "do_3D": True,
     }
 
-    # Default cluster configuration for GPU processing
-    if cluster_config is None:
-        cluster_config = {
+    # Default segmentation cluster configuration for GPU processing
+    if segmentation_cluster_config is None:
+        segmentation_cluster_config = {
+            "cluster_type": "local_cluster",
             "n_workers": 3,
             "threads_per_worker": 1,
             "memory_limit": "300GB",
@@ -307,7 +308,7 @@ def distributed_nuclei_segmentation(
         preprocessing_steps=preprocessing_steps,
         model_kwargs=model_kwargs,
         eval_kwargs=eval_kwargs,
-        cluster_kwargs=cluster_config,
+        cluster_kwargs=segmentation_cluster_config,
         temporary_directory=temporary_directory,
     )
 
@@ -320,6 +321,7 @@ def distributed_nuclei_segmentation(
 def apply_deformation_to_channels(
     reference_zarr_path: str,
     channel_zarr_paths: List[str],
+    affine_matrix_path: str,
     deformation_field_path: str,
     output_directory: str,
     voxel_spacing: List[float],
@@ -327,14 +329,17 @@ def apply_deformation_to_channels(
     cluster_config: Optional[Dict] = None,
 ) -> List[str]:
     """
-    Apply computed deformation field to multiple imaging channels.
+    Apply computed affine matrix and deformation field to multiple imaging channels.
 
-    Uses the deformation field computed from registration channels (405nm, 488nm)
-    to align all other imaging channels (epitope markers) for consistent multi-round analysis.
+    Uses both the affine transformation and deformation field computed from registration
+    channels (405nm, 488nm) to align all other imaging channels (epitope markers) for
+    consistent multi-round analysis. This applies the complete transformation pipeline
+    to raw zarr volumes.
 
     Args:
         reference_zarr_path (str): Path to reference volume (fixed)
         channel_zarr_paths (List[str]): Paths to channel volumes to be transformed
+        affine_matrix_path (str): Path to computed affine transformation matrix
         deformation_field_path (str): Path to computed deformation field
         output_directory (str): Directory for aligned channel outputs
         voxel_spacing (List[float]): Voxel spacing in [z, y, x] order
@@ -344,8 +349,9 @@ def apply_deformation_to_channels(
     Returns:
         List[str]: Paths to aligned channel volumes
     """
-    # Load reference volume and deformation field
+    # Load reference volume, affine matrix, and deformation field
     reference_volume = zarr.open(reference_zarr_path, mode="r")
+    affine_matrix = np.loadtxt(affine_matrix_path)
     deformation_field = zarr.open(deformation_field_path, mode="r")
 
     # Default cluster configuration
@@ -379,13 +385,13 @@ def apply_deformation_to_channels(
         channel_name = os.path.basename(channel_path).replace(".zarr", "")
         output_path = os.path.join(output_directory, f"{channel_name}_aligned.zarr")
         
-        # Apply deformation field
+        # Apply both affine matrix and deformation field transformations
         distributed_apply_transform(
             reference_volume,
             channel_volume,
             voxel_spacing,
             voxel_spacing,
-            transform_list=[deformation_field],
+            transform_list=[affine_matrix, deformation_field],
             blocksize=block_size,
             write_path=output_path,
             cluster_kwargs=cluster_config.copy(),

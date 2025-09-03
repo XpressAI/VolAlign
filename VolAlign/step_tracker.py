@@ -199,6 +199,7 @@ def _generate_pipeline_steps(
             "function_args": {
                 "reference_round_data": f"${{steps.data_preparation.substeps.tiff_to_zarr_{reference_round}.outputs}}",
                 "target_round_data": f"${{steps.data_preparation.substeps.tiff_to_zarr_{round_name}.outputs}}",
+                "affine_matrix_path": f"${{steps.registration_workflows.substeps.registration_{reference_round}_to_{round_name}.outputs.affine_matrix}}",
                 "deformation_field_path": f"${{steps.registration_workflows.substeps.registration_{reference_round}_to_{round_name}.outputs.deformation_field}}",
                 "output_directory": f"aligned/{round_name}",
             },
