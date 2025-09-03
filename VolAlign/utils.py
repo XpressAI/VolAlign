@@ -446,12 +446,17 @@ def merge_zarr_channels(
     merge_strategy: str = "mean",
     block_depth: int = 50,
     compression: str = "zstd",
+    scale_to_uint16: bool = True,
 ) -> None:
     """
     Memory-efficient merging of two Zarr volumes representing different imaging channels.
 
     Supports different merging strategies for combining channels (e.g., 405nm and 488nm)
     commonly used in microscopy registration workflows.
+
+    Optionally scales each input volume to the full uint16 range using that volume's
+    *global* (cropped) min and max, computed in a first pass. Scaling is then applied
+    per block during the merge pass.
 
     Args:
         channel_a_path (str): Path to first channel Zarr volume
@@ -460,18 +465,20 @@ def merge_zarr_channels(
         merge_strategy (str): Merging method - "mean", "max", or "stack"
         block_depth (int): Number of Z-slices to process per block
         compression (str): Compression algorithm for output
+        scale_to_uint16 (bool): If True, scale each input to [0, 65535] via its
+            global min/max before merging (computed once over the cropped region).
 
     Returns:
         None
     """
-    # Open input volumes as memory maps
+    # Open input volumes
     vol_a = zarr.open(channel_a_path, mode="r")
     vol_b = zarr.open(channel_b_path, mode="r")
 
     print(f"Channel A shape: {vol_a.shape}, dtype: {vol_a.dtype}")
     print(f"Channel B shape: {vol_b.shape}, dtype: {vol_b.dtype}")
 
-    # Ensure compatible shapes
+    # Ensure compatible shapes (crop to common overlapping region)
     if vol_a.shape != vol_b.shape:
         min_shape = tuple(min(sa, sb) for sa, sb in zip(vol_a.shape, vol_b.shape))
         print(f"Cropping to common shape: {min_shape}")
@@ -488,10 +495,11 @@ def merge_zarr_channels(
         out_shape = (mz, my, mx)
         out_chunks = (min(block_depth, mz), min(512, my), min(512, mx))
 
+    # Choose output dtype
+    out_dtype = np.uint16 if scale_to_uint16 else np.dtype(vol_a.dtype).newbyteorder("<")
+
     # Create output Zarr
     compressor = Blosc(cname=compression, clevel=3, shuffle=Blosc.SHUFFLE)
-    out_dtype = np.dtype(vol_a.dtype).newbyteorder("<")
-
     z_out = zarr.open(
         output_path,
         mode="w",
@@ -501,34 +509,76 @@ def merge_zarr_channels(
         compressor=compressor,
     )
 
-    # Process blocks along Z-axis
-    for z0 in tqdm(
-        range(0, mz, block_depth), desc=f"Merging channels ({merge_strategy})"
-    ):
+    def _compute_min_max(vol, mz, my, mx, block_depth):
+        gmin = np.inf
+        gmax = -np.inf
+        for z0 in tqdm(range(0, mz, block_depth), desc="Scanning min/max"):
+            z1 = min(z0 + block_depth, mz)
+            blk = vol[z0:z1, :my, :mx]
+            # ensure numpy array (zarr returns ndarray-like already)
+            bmin = np.min(blk)
+            bmax = np.max(blk)
+            if bmin < gmin:
+                gmin = float(bmin)
+            if bmax > gmax:
+                gmax = float(bmax)
+        # Handle empty/degenerate cases defensively
+        if not np.isfinite(gmin) or not np.isfinite(gmax):
+            gmin, gmax = 0.0, 0.0
+        return gmin, gmax
+
+    def _scale_block_to_uint16(block, vmin, vmax):
+        if vmax <= vmin:
+            # Flat volume: map everything to 0
+            out = np.zeros_like(block, dtype=np.uint16)
+            return out
+        scale = 65535.0 / (vmax - vmin)
+        # Use float32 for memory efficiency; rint to keep integer behavior
+        out = np.rint((block.astype(np.float32) - vmin) * scale)
+        # Clip and cast
+        np.clip(out, 0.0, 65535.0, out=out)
+        return out.astype(np.uint16, copy=False)
+
+    # First pass: compute global min/max if scaling is requested
+    if scale_to_uint16:
+        print("Computing global min/max for scaling...")
+        a_min, a_max = _compute_min_max(vol_a, mz, my, mx, block_depth)
+        b_min, b_max = _compute_min_max(vol_b, mz, my, mx, block_depth)
+        print(f"A: min={a_min}, max={a_max} | B: min={b_min}, max={b_max}")
+
+    # Second pass: process blocks along Z-axis and write output
+    for z0 in tqdm(range(0, mz, block_depth), desc=f"Merging channels ({merge_strategy})"):
         z1 = min(z0 + block_depth, mz)
         a_block = vol_a[z0:z1, :my, :mx]
         b_block = vol_b[z0:z1, :my, :mx]
 
+        if scale_to_uint16:
+            a_block = _scale_block_to_uint16(a_block, a_min, a_max)
+            b_block = _scale_block_to_uint16(b_block, b_min, b_max)
+        else:
+            # Keep original; we will cast as needed on write
+            pass
+
         if merge_strategy == "max":
-            merged_block = np.maximum(a_block, b_block).astype(out_dtype, copy=False)
-            z_out[z0:z1, :, :] = merged_block
+            merged_block = np.maximum(a_block, b_block)
+            z_out[z0:z1, :, :] = merged_block.astype(out_dtype, copy=False)
 
         elif merge_strategy == "mean":
-            # Use float32 for computation, then cast back
-            merged_block = (
-                a_block.astype(np.float32) + b_block.astype(np.float32)
-            ) * 0.5
+            # Compute in float32 to avoid overflow, then round and cast
+            merged_block = (a_block.astype(np.float32) + b_block.astype(np.float32)) * 0.5
             merged_block = np.rint(merged_block).astype(out_dtype, copy=False)
             z_out[z0:z1, :, :] = merged_block
 
         elif merge_strategy == "stack":
+            # Write each as its own slice (scaled if requested)
             z_out[0, z0:z1, :, :] = a_block.astype(out_dtype, copy=False)
             z_out[1, z0:z1, :, :] = b_block.astype(out_dtype, copy=False)
 
         else:
             raise ValueError(f"Unknown merge_strategy: {merge_strategy}")
 
-    print(f"Channel merging complete: {output_path} (shape: {z_out.shape})")
+    print(f"Channel merging complete: {output_path} (shape: {z_out.shape}, dtype: {z_out.dtype})")
+
 
 
 def stack_tiff_images(file1: str, file2: str, output_file: str) -> None:

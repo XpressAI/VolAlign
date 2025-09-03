@@ -112,11 +112,3 @@ segmentation_cluster_config:
   # Use local CUDA for GPU processing
   use_local_cuda: true
   
-  # Additional cluster configuration options
-  config:
-    distributed.nanny.pre-spawn-environ:
-      MALLOC_TRIM_THRESHOLD_: 65536
-      MKL_NUM_THREADS: 10
-      OMP_NUM_THREADS: 10
-      OPENBLAS_NUM_THREADS: 10
-    distributed.scheduler.worker-ttl: null

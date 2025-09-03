@@ -425,6 +425,28 @@ def example_individual_functions():
         voxel_spacing=[0.2, 0.1625, 0.1625],
     )
 
+    # Example 4b: Using the new split registration methods for more granular control
+    print("4b. Using split registration methods...")
+    # Step 1: Initial registration (create channels + affine registration)
+    init_results = pipeline.initial_affine_registration(
+        fixed_round_data={"405": "/path/to/fixed_405.zarr", "488": "/path/to/fixed_488.zarr"},
+        moving_round_data={"405": "/path/to/moving_405.zarr", "488": "/path/to/moving_488.zarr"},
+        registration_output_dir="/path/to/registration_output",
+        registration_name="round1_to_round2"
+    )
+    
+    # Step 2: Final deformation registration (deformation field registration)
+    final_results = pipeline.final_deformation_registration(
+        fixed_registration_channel=init_results["fixed_registration_channel"],
+        moving_registration_channel=init_results["moving_registration_channel"],
+        affine_matrix_path=init_results["affine_matrix"],
+        registration_output_dir="/path/to/registration_output",
+        registration_name="round1_to_round2"
+    )
+    
+    # Note: The original run_registration_workflow() method still works and internally
+    # calls initial_affine_registration() and final_deformation_registration() for backward compatibility
+
     # Example 5: Distributed nuclei segmentation
     print("5. Running distributed nuclei segmentation...")
     segments, boxes = distributed_nuclei_segmentation(

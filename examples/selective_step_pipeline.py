@@ -202,6 +202,8 @@ class SelectiveStepPipeline:
             "process_rounds": "Process all rounds from config (TIFF to Zarr conversion)",
             "segmentation": "Run nuclei segmentation on reference round",
             "registration": "Run registration workflow for a specific round (requires --round)",
+            "initial_affine_registration": "Run initial affine registration (create channels + affine) for a specific round (requires --round)",
+            "final_deformation_registration": "Run final deformation registration (deformation field) for a specific round (requires --round)",
             "alignment": "Apply registration to align channels for a specific round (requires --round)",
             "all": "Run all steps sequentially",
             "progress": "Show current pipeline progress",
@@ -214,6 +216,9 @@ class SelectiveStepPipeline:
 
         print(f"\n Reference round: {self.pipeline.reference_round}")
         print(f" Available rounds: {list(self.pipeline.rounds_data.keys())}")
+        print(f"\n Note: 'initial_affine_registration' and 'final_deformation_registration' are split methods")
+        print(f"       that allow more granular control over the registration process.")
+        print(f"       The original 'registration' step still works and calls both internally.")
 
         return steps
 
@@ -592,6 +597,103 @@ class SelectiveStepPipeline:
             substep_id, substep_config, "registration_workflows", execute_registration
         )
 
+    def step_initial_affine_registration(self, target_round):
+        """Step 3a: Run initial affine registration (create channels + affine) for a specific round."""
+        print(f"\n=== Step 3a: Initial Affine Registration for {target_round} ===")
+        print(
+            f"Running initial affine registration (create channels + affine) for {target_round} to reference round {self.pipeline.reference_round}"
+        )
+
+        # Ensure rounds are processed first
+        if self.processed_rounds is None:
+            print("⚠️ Rounds not processed yet. Running process_rounds first...")
+            self.step_process_rounds()
+
+        if target_round == self.pipeline.reference_round:
+            print(f"⏭️ Skipping initial registration for reference round {target_round}")
+            return None
+
+        if target_round not in self.processed_rounds:
+            raise ValueError(
+                f"Round {target_round} not found in processed rounds: {list(self.processed_rounds.keys())}"
+            )
+
+        try:
+            target_round_zarr = self.processed_rounds[target_round]
+            init_results = self.pipeline.initial_affine_registration(
+                fixed_round_data=self.reference_round_zarr,
+                moving_round_data=target_round_zarr,
+                registration_output_dir=str(
+                    self.pipeline.working_directory
+                    / "registration"
+                    / f"{self.pipeline.reference_round}_to_{target_round}"
+                ),
+                registration_name=f"{self.pipeline.reference_round}_to_{target_round}",
+            )
+
+            print(f"✓ Initial registration completed for {target_round}!")
+            print(f"✓ Initial registration results: {self._summarize_result(init_results, 'initial registration')}")
+
+            return init_results
+
+        except Exception as e:
+            print(f"✗ Error running initial registration for {target_round}: {e}")
+            raise
+
+    def step_final_deformation_registration(self, target_round):
+        """Step 3b: Run final deformation registration (deformation field) for a specific round."""
+        print(f"\n=== Step 3b: Final Deformation Registration for {target_round} ===")
+        print(
+            f"Running final deformation registration (deformation field) for {target_round} to reference round {self.pipeline.reference_round}"
+        )
+
+        if target_round == self.pipeline.reference_round:
+            print(f"⏭️ Skipping final registration for reference round {target_round}")
+            return None
+
+        if target_round not in self.processed_rounds:
+            raise ValueError(
+                f"Round {target_round} not found in processed rounds: {list(self.processed_rounds.keys())}"
+            )
+
+        try:
+            # Check if initial registration results exist
+            registration_dir = (
+                self.pipeline.working_directory
+                / "registration"
+                / f"{self.pipeline.reference_round}_to_{target_round}"
+            )
+            registration_name = f"{self.pipeline.reference_round}_to_{target_round}"
+            
+            fixed_reg_channel = registration_dir / f"{registration_name}_fixed_registration.zarr"
+            moving_reg_channel = registration_dir / f"{registration_name}_moving_registration.zarr"
+            affine_matrix_path = registration_dir / f"{registration_name}_affine_matrix.txt"
+
+            if not all([fixed_reg_channel.exists(), moving_reg_channel.exists(), affine_matrix_path.exists()]):
+                print(f"⚠️ Initial registration not found for {target_round}. Running initial registration first...")
+                init_results = self.step_initial_affine_registration(target_round)
+                if init_results:
+                    fixed_reg_channel = init_results["fixed_registration_channel"]
+                    moving_reg_channel = init_results["moving_registration_channel"]
+                    affine_matrix_path = init_results["affine_matrix"]
+
+            final_results = self.pipeline.final_deformation_registration(
+                fixed_registration_channel=str(fixed_reg_channel),
+                moving_registration_channel=str(moving_reg_channel),
+                affine_matrix_path=str(affine_matrix_path),
+                registration_output_dir=str(registration_dir),
+                registration_name=registration_name,
+            )
+
+            print(f"✓ Final registration completed for {target_round}!")
+            print(f"✓ Final registration results: {self._summarize_result(final_results, 'final registration')}")
+
+            return final_results
+
+        except Exception as e:
+            print(f"✗ Error running final registration for {target_round}: {e}")
+            raise
+
     def _get_deformation_field_path(self, target_round, substep_config):
         """Get deformation field path from substep config or construct fallback."""
         # Try to get from expected outputs first
@@ -925,17 +1027,19 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --list-steps                    # List available steps
-  %(prog)s --step process_rounds           # Process all rounds
-  %(prog)s --step segmentation             # Run segmentation
-  %(prog)s --step registration --round round2  # Register round2
-  %(prog)s --step registration --round all     # Register all non-reference rounds
-  %(prog)s --step alignment --round round2     # Align round2 channels
-  %(prog)s --step alignment --round all        # Align all non-reference rounds
-  %(prog)s --step all                      # Run complete pipeline
-  %(prog)s --step progress                 # Show progress
-  %(prog)s --step resume                   # Resume interrupted pipeline
-  %(prog)s --reset-step data_preparation   # Reset step to pending
+  %(prog)s --list-steps                                    # List available steps
+  %(prog)s --step process_rounds                           # Process all rounds
+  %(prog)s --step segmentation                             # Run segmentation
+  %(prog)s --step registration --round round2              # Register round2
+  %(prog)s --step initial_affine_registration --round round2      # Run initial affine registration for round2
+  %(prog)s --step final_deformation_registration --round round2   # Run final deformation registration for round2
+  %(prog)s --step registration --round all                 # Register all non-reference rounds
+  %(prog)s --step alignment --round round2                 # Align round2 channels
+  %(prog)s --step alignment --round all                    # Align all non-reference rounds
+  %(prog)s --step all                                      # Run complete pipeline
+  %(prog)s --step progress                                 # Show progress
+  %(prog)s --step resume                                   # Resume interrupted pipeline
+  %(prog)s --reset-step data_preparation                   # Reset step to pending
         """,
     )
 
@@ -945,6 +1049,8 @@ Examples:
             "process_rounds",
             "segmentation",
             "registration",
+            "initial_affine_registration",
+            "final_deformation_registration",
             "alignment",
             "all",
             "progress",
@@ -1008,12 +1114,12 @@ Examples:
             return
 
         # Validate round argument for steps that need it
-        if args.step in ["registration", "alignment"] and not args.round:
+        if args.step in ["registration", "initial_affine_registration", "final_deformation_registration", "alignment"] and not args.round:
             print(f"✗ Error: --round argument is required for {args.step} step")
             return
 
         # Handle --round all convenience for registration and alignment
-        if args.step in ["registration", "alignment"] and args.round == "all":
+        if args.step in ["registration", "initial_affine_registration", "final_deformation_registration", "alignment"] and args.round == "all":
             print(f"Executing {args.step} for all non-reference rounds...")
             
             # Ensure rounds are processed first
@@ -1027,6 +1133,10 @@ Examples:
                     print(f"\n--- {args.step.title()} for {round_name} ---")
                     if args.step == "registration":
                         pipeline.step_registration(round_name)
+                    elif args.step == "initial_affine_registration":
+                        pipeline.step_initial_affine_registration(round_name)
+                    elif args.step == "final_deformation_registration":
+                        pipeline.step_final_deformation_registration(round_name)
                     else:  # alignment
                         pipeline.step_alignment(round_name)
                     processed_any = True
@@ -1048,6 +1158,12 @@ Examples:
 
         elif args.step == "registration":
             pipeline.step_registration(args.round)
+
+        elif args.step == "initial_affine_registration":
+            pipeline.step_initial_affine_registration(args.round)
+
+        elif args.step == "final_deformation_registration":
+            pipeline.step_final_deformation_registration(args.round)
 
         elif args.step == "alignment":
             pipeline.step_alignment(args.round)

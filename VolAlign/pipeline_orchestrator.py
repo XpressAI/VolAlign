@@ -714,7 +714,7 @@ class MicroscopyProcessingPipeline:
 
         return output_path
 
-    def run_registration_workflow(
+    def initial_affine_registration(
         self,
         fixed_round_data: Dict[str, str],
         moving_round_data: Dict[str, str],
@@ -722,7 +722,7 @@ class MicroscopyProcessingPipeline:
         registration_name: str,
     ) -> Dict[str, str]:
         """
-        Execute complete two-stage registration workflow.
+        Execute initial affine registration workflow: create registration channels and compute affine registration.
 
         Args:
             fixed_round_data (Dict[str, str]): Fixed round channel paths
@@ -731,12 +731,12 @@ class MicroscopyProcessingPipeline:
             registration_name (str): Base name for registration files
 
         Returns:
-            Dict[str, str]: Dictionary with paths to registration results
+            Dict[str, str]: Dictionary with paths to initial affine registration results
         """
         reg_dir = Path(registration_output_dir)
         reg_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"Starting registration workflow: {registration_name}")
+        print(f"Starting initial registration workflow: {registration_name}")
 
         # Step 1: Create registration channels by merging configured channels
         fixed_reg_channel = reg_dir / f"{registration_name}_fixed_registration.zarr"
@@ -771,11 +771,45 @@ class MicroscopyProcessingPipeline:
             downsample_factors=self.downsample_factors,
         )
 
-        # Step 3: Compute deformation field registration
+        init_registration_results = {
+            "fixed_registration_channel": str(fixed_reg_channel),
+            "moving_registration_channel": str(moving_reg_channel),
+            "affine_matrix": str(affine_matrix_path),
+        }
+
+        return init_registration_results
+
+    def final_deformation_registration(
+        self,
+        fixed_registration_channel: str,
+        moving_registration_channel: str,
+        affine_matrix_path: str,
+        registration_output_dir: str,
+        registration_name: str,
+    ) -> Dict[str, str]:
+        """
+        Execute final deformation registration workflow: compute deformation field registration.
+
+        Args:
+            fixed_registration_channel (str): Path to fixed registration channel
+            moving_registration_channel (str): Path to moving registration channel
+            affine_matrix_path (str): Path to computed affine transformation matrix
+            registration_output_dir (str): Directory for registration outputs
+            registration_name (str): Base name for registration files
+
+        Returns:
+            Dict[str, str]: Dictionary with paths to final deformation registration results
+        """
+        reg_dir = Path(registration_output_dir)
+        reg_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"Starting final deformation registration workflow: {registration_name}")
+
+        # Compute deformation field registration
         final_aligned_path = compute_deformation_field_registration(
-            fixed_zarr_path=str(fixed_reg_channel),
-            moving_zarr_path=str(moving_reg_channel),
-            affine_matrix_path=str(affine_matrix_path),
+            fixed_zarr_path=fixed_registration_channel,
+            moving_zarr_path=moving_registration_channel,
+            affine_matrix_path=affine_matrix_path,
             output_directory=str(reg_dir),
             output_name=registration_name,
             voxel_spacing=self.voxel_spacing,
@@ -783,25 +817,72 @@ class MicroscopyProcessingPipeline:
             cluster_config=self.cluster_config,
         )
 
-        # Step 4: Create registration summary
-        summary_path = reg_dir / f"{registration_name}_summary.json"
         deformation_field_path = reg_dir / f"{registration_name}_deformation_field.zarr"
 
+        final_registration_results = {
+            "deformation_field": str(deformation_field_path),
+            "final_aligned": final_aligned_path,
+        }
+
+        return final_registration_results
+
+    def run_registration_workflow(
+        self,
+        fixed_round_data: Dict[str, str],
+        moving_round_data: Dict[str, str],
+        registration_output_dir: str,
+        registration_name: str,
+    ) -> Dict[str, str]:
+        """
+        Execute complete two-stage registration workflow.
+
+        Args:
+            fixed_round_data (Dict[str, str]): Fixed round channel paths
+            moving_round_data (Dict[str, str]): Moving round channel paths
+            registration_output_dir (str): Directory for registration outputs
+            registration_name (str): Base name for registration files
+
+        Returns:
+            Dict[str, str]: Dictionary with paths to registration results
+        """
+        reg_dir = Path(registration_output_dir)
+        reg_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"Starting registration workflow: {registration_name}")
+
+        # Step 1: Initial registration (create channels + affine registration)
+        init_results = self.initial_affine_registration(
+            fixed_round_data=fixed_round_data,
+            moving_round_data=moving_round_data,
+            registration_output_dir=registration_output_dir,
+            registration_name=registration_name,
+        )
+
+        # Step 2: Final registration (deformation field registration)
+        final_results = self.final_registration(
+            fixed_registration_channel=init_results["fixed_registration_channel"],
+            moving_registration_channel=init_results["moving_registration_channel"],
+            affine_matrix_path=init_results["affine_matrix"],
+            registration_output_dir=registration_output_dir,
+            registration_name=registration_name,
+        )
+
+        # Step 3: Create registration summary
+        summary_path = reg_dir / f"{registration_name}_summary.json"
+
         create_registration_summary(
-            fixed_path=str(fixed_reg_channel),
-            moving_path=str(moving_reg_channel),
-            affine_matrix_path=str(affine_matrix_path),
-            deformation_field_path=str(deformation_field_path),
-            final_aligned_path=final_aligned_path,
+            fixed_path=init_results["fixed_registration_channel"],
+            moving_path=init_results["moving_registration_channel"],
+            affine_matrix_path=init_results["affine_matrix"],
+            deformation_field_path=final_results["deformation_field"],
+            final_aligned_path=final_results["final_aligned"],
             output_summary_path=str(summary_path),
         )
 
+        # Combine all results
         registration_results = {
-            "fixed_registration_channel": str(fixed_reg_channel),
-            "moving_registration_channel": str(moving_reg_channel),
-            "affine_matrix": str(affine_matrix_path),
-            "deformation_field": str(deformation_field_path),
-            "final_aligned": final_aligned_path,
+            **init_results,
+            **final_results,
             "summary": str(summary_path),
         }
 
