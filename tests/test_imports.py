@@ -42,6 +42,12 @@ class TestPackageImports:
 
         assert pipeline_orchestrator is not None
 
+    def test_step_tracker_import(self):
+        """Test that the step_tracker module can be imported."""
+        from VolAlign import step_tracker
+
+        assert step_tracker is not None
+
     def test_all_modules_importable(self):
         """Test that all expected modules are importable."""
         expected_modules = [
@@ -49,6 +55,7 @@ class TestPackageImports:
             "VolAlign.alignment_tools",
             "VolAlign.distributed_processing",
             "VolAlign.pipeline_orchestrator",
+            "VolAlign.step_tracker",
         ]
 
         for module_name in expected_modules:
@@ -193,6 +200,44 @@ class TestFunctionAvailability:
             assert callable(
                 getattr(distributed_processing, func_name)
             ), f"{func_name} is not callable"
+
+    def test_step_tracker_functions_available(self):
+        """Test that expected functions are available in step_tracker module."""
+        from VolAlign import step_tracker
+
+        # Test for actual functions from the step_tracker module
+        expected_functions = [
+            "generate_extended_config_from_original",
+            "save_extended_config",
+            "load_extended_config_if_exists",
+        ]
+
+        # Check that expected functions are available
+        for func_name in expected_functions:
+            assert hasattr(
+                step_tracker, func_name
+            ), f"Function {func_name} not found in step_tracker module"
+            assert callable(
+                getattr(step_tracker, func_name)
+            ), f"{func_name} is not callable"
+
+    def test_step_tracker_classes_available(self):
+        """Test that expected classes are available in step_tracker module."""
+        from VolAlign import step_tracker
+
+        # Test for actual classes from the step_tracker module
+        expected_classes = [
+            "PipelineStepManager",
+        ]
+
+        # Check that expected classes are available
+        for class_name in expected_classes:
+            assert hasattr(
+                step_tracker, class_name
+            ), f"Class {class_name} not found in step_tracker module"
+            assert isinstance(
+                getattr(step_tracker, class_name), type
+            ), f"{class_name} is not a class"
 
 
 class TestOptionalDependencies:

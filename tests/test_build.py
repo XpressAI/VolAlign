@@ -136,7 +136,7 @@ class TestPackageBuild:
                     [
                         sys.executable,
                         "-c",
-                        'import VolAlign; print("Import successful")',
+                        'import VolAlign; from VolAlign import step_tracker; print("Import successful")',
                     ],
                     capture_output=True,
                     text=True,
