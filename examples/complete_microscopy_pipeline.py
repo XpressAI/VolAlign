@@ -389,10 +389,19 @@ def example_individual_functions():
 
     # Example 1: Downsample a large Zarr volume
     print("1. Downsampling Zarr volume...")
+    # For registration tasks - more aggressive downsampling
     downsample_zarr_volume(
         input_zarr_path="/path/to/large_volume.zarr",
-        output_zarr_path="/path/to/downsampled_volume.zarr",
-        downsample_factors=(4, 7, 7),
+        output_zarr_path="/path/to/downsampled_volume_registration.zarr",
+        downsample_factors=(4, 7, 7),  # Registration downsample factors
+        chunk_size=50,
+    )
+
+    # For segmentation tasks - more conservative downsampling
+    downsample_zarr_volume(
+        input_zarr_path="/path/to/large_volume.zarr",
+        output_zarr_path="/path/to/downsampled_volume_segmentation.zarr",
+        downsample_factors=(1, 3, 3),  # Segmentation downsample factors
         chunk_size=50,
     )
 
@@ -429,21 +438,27 @@ def example_individual_functions():
     print("4b. Using split registration methods...")
     # Step 1: Initial registration (create channels + affine registration)
     init_results = pipeline.initial_affine_registration(
-        fixed_round_data={"405": "/path/to/fixed_405.zarr", "488": "/path/to/fixed_488.zarr"},
-        moving_round_data={"405": "/path/to/moving_405.zarr", "488": "/path/to/moving_488.zarr"},
+        fixed_round_data={
+            "405": "/path/to/fixed_405.zarr",
+            "488": "/path/to/fixed_488.zarr",
+        },
+        moving_round_data={
+            "405": "/path/to/moving_405.zarr",
+            "488": "/path/to/moving_488.zarr",
+        },
         registration_output_dir="/path/to/registration_output",
-        registration_name="round1_to_round2"
+        registration_name="round1_to_round2",
     )
-    
+
     # Step 2: Final deformation registration (deformation field registration)
     final_results = pipeline.final_deformation_registration(
         fixed_registration_channel=init_results["fixed_registration_channel"],
         moving_registration_channel=init_results["moving_registration_channel"],
         affine_matrix_path=init_results["affine_matrix"],
         registration_output_dir="/path/to/registration_output",
-        registration_name="round1_to_round2"
+        registration_name="round1_to_round2",
     )
-    
+
     # Note: The original run_registration_workflow() method still works and internally
     # calls initial_affine_registration() and final_deformation_registration() for backward compatibility
 
@@ -467,7 +482,7 @@ def example_individual_functions():
     upsample_segmentation_labels(
         input_zarr_path="/path/to/downsampled_masks.zarr",
         output_zarr_path="/path/to/fullres_masks.zarr",
-        upsample_factors=(4, 7, 7),
+        upsample_factors=(1, 3, 3),  # Should match segmentation downsample factors
     )
 
     print("Individual function examples complete!")

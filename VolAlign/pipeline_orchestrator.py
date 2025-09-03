@@ -96,7 +96,25 @@ class MicroscopyProcessingPipeline:
         self.working_directory.mkdir(parents=True, exist_ok=True)
 
         self.voxel_spacing = np.asarray(self.config["voxel_spacing"], dtype=float)
-        self.downsample_factors = tuple(self.config["downsample_factors"])
+
+        # Handle both old and new downsample_factors format
+        downsample_config = self.config["downsample_factors"]
+        if isinstance(downsample_config, dict):
+            # New format with separate factors for registration and segmentation
+            self.registration_downsample_factors = tuple(
+                downsample_config["registration"]
+            )
+            self.segmentation_downsample_factors = tuple(
+                downsample_config["segmentation"]
+            )
+            # Keep backward compatibility
+            self.downsample_factors = self.registration_downsample_factors
+        else:
+            # Old format - use same factors for both tasks
+            self.downsample_factors = tuple(downsample_config)
+            self.registration_downsample_factors = self.downsample_factors
+            self.segmentation_downsample_factors = self.downsample_factors
+
         self.block_size = tuple(int(x) for x in self.config["block_size"])
 
         # Registration parameters - required
@@ -773,7 +791,7 @@ class MicroscopyProcessingPipeline:
             moving_volume_path=str(moving_reg_channel),
             voxel_spacing=self.voxel_spacing,
             output_matrix_path=str(affine_matrix_path),
-            downsample_factors=self.downsample_factors,
+            downsample_factors=self.registration_downsample_factors,
         )
 
         init_registration_results = {
@@ -945,7 +963,7 @@ class MicroscopyProcessingPipeline:
             downsample_zarr_volume(
                 input_zarr_path=input_channel,
                 output_zarr_path=str(downsampled_path),
-                downsample_factors=self.downsample_factors,
+                downsample_factors=self.segmentation_downsample_factors,
             )
 
             segmentation_input = str(downsampled_path)
@@ -971,7 +989,7 @@ class MicroscopyProcessingPipeline:
             upsample_segmentation_labels(
                 input_zarr_path=str(segmentation_output),
                 output_zarr_path=str(upsampled_path),
-                upsample_factors=self.downsample_factors,
+                upsample_factors=self.segmentation_downsample_factors,
             )
 
             final_segmentation_path = str(upsampled_path)
