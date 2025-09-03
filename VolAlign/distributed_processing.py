@@ -70,7 +70,7 @@ def compute_affine_registration(
     # Define default alignment steps if none provided
     if alignment_steps is None:
         # Feature-based initialization
-        ransac_kwargs = {"blob_sizes": [2, 100],'use_gpu':True}
+        ransac_kwargs = {"blob_sizes": [2, 100], "use_gpu": True}
 
         # Gradient descent refinement
         affine_kwargs = {
@@ -384,7 +384,7 @@ def apply_deformation_to_channels(
         # Generate output path
         channel_name = os.path.basename(channel_path).replace(".zarr", "")
         output_path = os.path.join(output_directory, f"{channel_name}_aligned.zarr")
-        
+
         # Apply both affine matrix and deformation field transformations
         distributed_apply_transform(
             reference_volume,

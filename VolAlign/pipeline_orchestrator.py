@@ -177,7 +177,12 @@ class MicroscopyProcessingPipeline:
             )
 
         cluster_config = self.config["cluster_config"]
-        required_cluster_params = ["cluster_type", "n_workers", "threads_per_worker", "memory_limit"]
+        required_cluster_params = [
+            "cluster_type",
+            "n_workers",
+            "threads_per_worker",
+            "memory_limit",
+        ]
 
         for param in required_cluster_params:
             if param not in cluster_config:

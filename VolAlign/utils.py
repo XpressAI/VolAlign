@@ -496,7 +496,9 @@ def merge_zarr_channels(
         out_chunks = (min(block_depth, mz), min(512, my), min(512, mx))
 
     # Choose output dtype
-    out_dtype = np.uint16 if scale_to_uint16 else np.dtype(vol_a.dtype).newbyteorder("<")
+    out_dtype = (
+        np.uint16 if scale_to_uint16 else np.dtype(vol_a.dtype).newbyteorder("<")
+    )
 
     # Create output Zarr
     compressor = Blosc(cname=compression, clevel=3, shuffle=Blosc.SHUFFLE)
@@ -547,7 +549,9 @@ def merge_zarr_channels(
         print(f"A: min={a_min}, max={a_max} | B: min={b_min}, max={b_max}")
 
     # Second pass: process blocks along Z-axis and write output
-    for z0 in tqdm(range(0, mz, block_depth), desc=f"Merging channels ({merge_strategy})"):
+    for z0 in tqdm(
+        range(0, mz, block_depth), desc=f"Merging channels ({merge_strategy})"
+    ):
         z1 = min(z0 + block_depth, mz)
         a_block = vol_a[z0:z1, :my, :mx]
         b_block = vol_b[z0:z1, :my, :mx]
@@ -565,7 +569,9 @@ def merge_zarr_channels(
 
         elif merge_strategy == "mean":
             # Compute in float32 to avoid overflow, then round and cast
-            merged_block = (a_block.astype(np.float32) + b_block.astype(np.float32)) * 0.5
+            merged_block = (
+                a_block.astype(np.float32) + b_block.astype(np.float32)
+            ) * 0.5
             merged_block = np.rint(merged_block).astype(out_dtype, copy=False)
             z_out[z0:z1, :, :] = merged_block
 
@@ -577,8 +583,9 @@ def merge_zarr_channels(
         else:
             raise ValueError(f"Unknown merge_strategy: {merge_strategy}")
 
-    print(f"Channel merging complete: {output_path} (shape: {z_out.shape}, dtype: {z_out.dtype})")
-
+    print(
+        f"Channel merging complete: {output_path} (shape: {z_out.shape}, dtype: {z_out.dtype})"
+    )
 
 
 def stack_tiff_images(file1: str, file2: str, output_file: str) -> None:
