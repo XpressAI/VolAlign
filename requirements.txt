@@ -15,8 +15,8 @@ pyarrow
 
 # Version constraints for compatibility
 numpy<2.0.0
-cupy-cuda12x==12.3.0
-cucim==23.10.0
+cupy-cuda12x==12.3.0; sys_platform == "linux"
+cucim==23.10.0; sys_platform == "linux"
 ClusterWrap==1.0.3
 
 # PyTorch with CUDA 12.4 support

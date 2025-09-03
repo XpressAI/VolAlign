@@ -30,8 +30,6 @@ dependencies = [
 
     # Version constraints for compatibility
     numpy<2.0.0
-    cupy-cuda12x==12.3.0
-    cucim==23.10.0
     ClusterWrap==1.0.3
 
     # PyTorch with CUDA 12.4 support
@@ -68,6 +66,11 @@ dev = [
     "black",
     "flake8",
     "mypy"
+]
+cuda-linux = [
+    # Linux-only CUDA dependencies
+    "cupy-cuda12x==12.3.0; sys_platform == 'linux'",
+    "cucim==23.10.0; sys_platform == 'linux'"
 ]
 
 [tool.setuptools.packages.find]
