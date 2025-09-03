@@ -1,3 +1,6 @@
+# PyTorch with CUDA 12.4 support from PyTorch index
+--extra-index-url https://download.pytorch.org/whl/cu124
+
 # Main git-based dependencies - these take priority and pip will handle their sub-dependencies
 git+https://github.com/RuihanZhang2015/ExSeq-Toolbox.git
 git+https://github.com/mansouralawi/cellpose.git
@@ -15,6 +18,14 @@ pyarrow
 
 # Version constraints for compatibility
 numpy<2.0.0
+cupy-cuda12x==12.3.0
+cucim==23.10.0
+ClusterWrap==1.0.3
+
+# PyTorch with CUDA 12.4 support
+torch==2.4.*
+torchvision==0.19.*
+torchaudio==2.4.*
 
 # Note: ExSeq-Toolbox will automatically install bigstream and nd2reader forks
 # All other dependencies will be automatically resolved by pip
