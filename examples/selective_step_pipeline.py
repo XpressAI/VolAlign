@@ -431,7 +431,7 @@ class SelectiveStepPipeline:
                     / "registration"
                     / f"{self.pipeline.reference_round}_to_{target_round}"
                 )
-                deformation_field_path = registration_dir / "deformation_field.zarr"
+                deformation_field_path = registration_dir / f"{self.pipeline.reference_round}_to_{target_round}_deformation_field.zarr"
 
                 if not deformation_field_path.exists():
                     print(
@@ -484,7 +484,7 @@ class SelectiveStepPipeline:
                 / "registration"
                 / f"{self.pipeline.reference_round}_to_{target_round}"
             )
-            deformation_field_path = registration_dir / "deformation_field.zarr"
+            deformation_field_path = registration_dir / f"{self.pipeline.reference_round}_to_{target_round}_deformation_field.zarr"
 
             if not deformation_field_path.exists():
                 print(

@@ -70,7 +70,7 @@ def compute_affine_registration(
     # Define default alignment steps if none provided
     if alignment_steps is None:
         # Feature-based initialization
-        ransac_kwargs = {"blob_sizes": [2, 100]}
+        ransac_kwargs = {"blob_sizes": [2, 100],'use_gpu':True}
 
         # Gradient descent refinement
         affine_kwargs = {
@@ -140,10 +140,10 @@ def compute_deformation_field_registration(
 
     # Load affine transformation
     affine_matrix = np.loadtxt(affine_matrix_path)
-
     # Default cluster configuration
     if cluster_config is None:
         cluster_config = {
+            "cluster_type": "local_cluster",
             "n_workers": 8,
             "threads_per_worker": 1,
             "memory_limit": "150GB",
@@ -172,7 +172,7 @@ def compute_deformation_field_registration(
         transform_list=[affine_matrix],
         blocksize=block_size,
         write_path=affine_aligned_path,
-        cluster_kwargs=cluster_config,
+        cluster_kwargs=cluster_config.copy(),
     )
 
     print("Initial affine alignment complete")
@@ -207,7 +207,7 @@ def compute_deformation_field_registration(
         overlap=0.3,
         rebalance_for_missing_neighbors=True,
         write_path=deformation_field_path,
-        cluster_kwargs=cluster_config,
+        cluster_kwargs=cluster_config.copy(),
     )
 
     print("Deformation field computation complete")
@@ -351,9 +351,10 @@ def apply_deformation_to_channels(
     # Default cluster configuration
     if cluster_config is None:
         cluster_config = {
+            "cluster_type": "local_cluster",
             "n_workers": 3,
             "threads_per_worker": 1,
-            "memory_limit": "200GB",
+            "memory_limit": "300GB",
             "config": {
                 "distributed.nanny.pre-spawn-environ": {
                     "MALLOC_TRIM_THRESHOLD_": 65536,
@@ -377,7 +378,7 @@ def apply_deformation_to_channels(
         # Generate output path
         channel_name = os.path.basename(channel_path).replace(".zarr", "")
         output_path = os.path.join(output_directory, f"{channel_name}_aligned.zarr")
-
+        
         # Apply deformation field
         distributed_apply_transform(
             reference_volume,
@@ -387,7 +388,7 @@ def apply_deformation_to_channels(
             transform_list=[deformation_field],
             blocksize=block_size,
             write_path=output_path,
-            cluster_kwargs=cluster_config,
+            cluster_kwargs=cluster_config.copy(),
         )
 
         aligned_channel_paths.append(output_path)

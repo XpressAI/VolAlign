@@ -95,9 +95,9 @@ class MicroscopyProcessingPipeline:
         self.working_directory = Path(self.config["working_directory"])
         self.working_directory.mkdir(parents=True, exist_ok=True)
 
-        self.voxel_spacing = self.config["voxel_spacing"]
+        self.voxel_spacing = np.asarray(self.config["voxel_spacing"], dtype=float)
         self.downsample_factors = tuple(self.config["downsample_factors"])
-        self.block_size = self.config["block_size"]
+        self.block_size = tuple(int(x) for x in self.config["block_size"])
 
         # Registration parameters - required
         if "registration" not in self.config:
@@ -177,7 +177,7 @@ class MicroscopyProcessingPipeline:
             )
 
         cluster_config = self.config["cluster_config"]
-        required_cluster_params = ["n_workers", "threads_per_worker", "memory_limit"]
+        required_cluster_params = ["cluster_type", "n_workers", "threads_per_worker", "memory_limit"]
 
         for param in required_cluster_params:
             if param not in cluster_config:
