@@ -221,12 +221,12 @@ def compute_deformation_field_registration(
 
     # Increase memory for final transformation
     final_cluster_config = cluster_config.copy()
-    
+
     # Double the original memory limit
     original_memory = cluster_config["memory_limit"]
     memory_value = int(original_memory.replace("GB", ""))
     final_cluster_config["memory_limit"] = f"{memory_value * 2}GB"
-    
+
     # Set n_workers to half the original value
     original_workers = cluster_config["n_workers"]
     final_cluster_config["n_workers"] = original_workers // 2
@@ -380,12 +380,12 @@ def apply_deformation_to_channels(
         }
 
     alignment_cluster_config = cluster_config.copy()
-    
+
     # Double the original memory limit
     original_memory = cluster_config["memory_limit"]
     memory_value = int(original_memory.replace("GB", ""))
     alignment_cluster_config["memory_limit"] = f"{memory_value * 2}GB"
-    
+
     # Set n_workers to half the original value
     original_workers = cluster_config["n_workers"]
     alignment_cluster_config["n_workers"] = original_workers // 2
@@ -412,7 +412,7 @@ def apply_deformation_to_channels(
             transform_list=[affine_matrix, deformation_field],
             blocksize=block_size,
             write_path=output_path,
-            cluster_kwargs=alignment_cluster_config,
+            cluster_kwargs=alignment_cluster_config.copy(),
         )
 
         aligned_channel_paths.append(output_path)
