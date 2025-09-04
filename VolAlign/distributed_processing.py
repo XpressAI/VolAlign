@@ -221,7 +221,15 @@ def compute_deformation_field_registration(
 
     # Increase memory for final transformation
     final_cluster_config = cluster_config.copy()
-    final_cluster_config["memory_limit"] = "300GB"
+    
+    # Double the original memory limit
+    original_memory = cluster_config["memory_limit"]
+    memory_value = int(original_memory.replace("GB", ""))
+    final_cluster_config["memory_limit"] = f"{memory_value * 2}GB"
+    
+    # Set n_workers to half the original value
+    original_workers = cluster_config["n_workers"]
+    final_cluster_config["n_workers"] = original_workers // 2
 
     distributed_apply_transform(
         fixed_volume,
@@ -357,9 +365,9 @@ def apply_deformation_to_channels(
     if cluster_config is None:
         cluster_config = {
             "cluster_type": "local_cluster",
-            "n_workers": 3,
+            "n_workers": 8,
             "threads_per_worker": 1,
-            "memory_limit": "300GB",
+            "memory_limit": "150GB",
             "config": {
                 "distributed.nanny.pre-spawn-environ": {
                     "MALLOC_TRIM_THRESHOLD_": 65536,
@@ -370,6 +378,17 @@ def apply_deformation_to_channels(
                 "distributed.scheduler.worker-ttl": None,
             },
         }
+
+    alignment_cluster_config = cluster_config.copy()
+    
+    # Double the original memory limit
+    original_memory = cluster_config["memory_limit"]
+    memory_value = int(original_memory.replace("GB", ""))
+    alignment_cluster_config["memory_limit"] = f"{memory_value * 2}GB"
+    
+    # Set n_workers to half the original value
+    original_workers = cluster_config["n_workers"]
+    alignment_cluster_config["n_workers"] = original_workers // 2
 
     aligned_channel_paths = []
 
@@ -393,7 +412,7 @@ def apply_deformation_to_channels(
             transform_list=[affine_matrix, deformation_field],
             blocksize=block_size,
             write_path=output_path,
-            cluster_kwargs=cluster_config.copy(),
+            cluster_kwargs=alignment_cluster_config,
         )
 
         aligned_channel_paths.append(output_path)

@@ -647,6 +647,11 @@ class SelectiveStepPipeline:
             f"Running final deformation registration (deformation field) for {target_round} to reference round {self.pipeline.reference_round}"
         )
 
+        # Ensure rounds are processed first
+        if self.processed_rounds is None:
+            print("⚠️ Rounds not processed yet. Running process_rounds first...")
+            self.step_process_rounds()
+
         if target_round == self.pipeline.reference_round:
             print(f"⏭️ Skipping final registration for reference round {target_round}")
             return None

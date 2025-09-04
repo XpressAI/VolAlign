@@ -105,9 +105,6 @@ cluster_config:
 # Segmentation-specific cluster configuration
 # Optimized for GPU-based segmentation tasks with higher memory requirements
 segmentation_cluster_config:
-  # Cluster type: "local_cluster", "slurm_cluster", "pbs_cluster", etc.
-  cluster_type: "local_cluster"
-  
   # Number of worker processes (fewer workers for GPU tasks)
   n_workers: 3
   
