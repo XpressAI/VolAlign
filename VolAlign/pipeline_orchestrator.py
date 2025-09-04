@@ -213,8 +213,13 @@ class MicroscopyProcessingPipeline:
         # Segmentation cluster configuration - optional, defaults to cluster_config if not provided
         if "segmentation_cluster_config" in self.config:
             segmentation_cluster_config = self.config["segmentation_cluster_config"]
-            # Validate required parameters for segmentation cluster config
-            for param in required_cluster_params:
+            # Validate required parameters for segmentation cluster config (excluding cluster_type)
+            required_segmentation_cluster_params = [
+                "n_workers",
+                "threads_per_worker",
+                "memory_limit",
+            ]
+            for param in required_segmentation_cluster_params:
                 if param not in segmentation_cluster_config:
                     raise ValueError(
                         f"Required parameter 'segmentation_cluster_config.{param}' missing from YAML configuration"
@@ -882,7 +887,7 @@ class MicroscopyProcessingPipeline:
         )
 
         # Step 2: Final registration (deformation field registration)
-        final_results = self.final_registration(
+        final_results = self.final_deformation_registration(
             fixed_registration_channel=init_results["fixed_registration_channel"],
             moving_registration_channel=init_results["moving_registration_channel"],
             affine_matrix_path=init_results["affine_matrix"],

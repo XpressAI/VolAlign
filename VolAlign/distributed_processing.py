@@ -281,7 +281,6 @@ def distributed_nuclei_segmentation(
     # Default segmentation cluster configuration for GPU processing
     if segmentation_cluster_config is None:
         segmentation_cluster_config = {
-            "cluster_type": "local_cluster",
             "n_workers": 3,
             "threads_per_worker": 1,
             "memory_limit": "300GB",

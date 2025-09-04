@@ -469,7 +469,6 @@ def example_individual_functions():
         output_zarr_path="/path/to/segmentation_masks.zarr",
         model_type="cpsam",
         segmentation_cluster_config={
-            "cluster_type": "local_cluster",
             "n_workers": 3,
             "threads_per_worker": 1,
             "memory_limit": "300GB",
