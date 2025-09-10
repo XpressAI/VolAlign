@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 from typing import List, Optional
 
+import h5py
 import numpy as np
 import SimpleITK as sitk
 import tifffile
@@ -11,38 +12,33 @@ from exm.stitching.tileset import Tileset
 from npy2bdv import BdvWriter
 from tqdm import tqdm
 
-from .utils import blend_ind
+from .utils import blend_ind, extract_dataset_from_ims, prepare_offsets_from_ims_files
 
 
 def create_bdv_xml(
     output_h5_file: str,
-    fov_list: list,
-    offset_array: np.ndarray,
+    ims_files: List[str],
     nchannels: int = 2,
-    increment_scale: float = 1900.0,
+    overlap_percentage: float = 0.05,
+    voxel_size: Optional[List[float]] = None,
 ) -> str:
     """
-    Creates a BDV/XML file for BigStitcher from a set of FOV TIFF images and their corresponding offsets.
+    Creates a BDV/XML file for BigStitcher from a set of .ims files.
 
-    The provided offset_array must be given in the order [column, row, z]:
-      - The first element represents the column position in the final stitched volume.
-      - The second element represents the row position.
-      - The third element represents the z-offset.
+    This function processes .ims files by extracting position information and datasets
+    on the fly, eliminating the need for pre-computed offset arrays. It handles the
+    complete workflow from .ims file reading to BDV/XML creation.
 
-    For example:
-        [0.0, 0.0, 0.0] corresponds to the first column, first row.
-        [2.0, 1.0, 0.0] corresponds to the third column, second row.
-
-    The function adjusts the provided column and row offsets by adding increments based on unique values,
-    ensuring that each FOV is clearly positioned according to its raw column/row location in the final volume.
-    It then writes the BDV/XML file using the npy2bdv library.
+    The function extracts XPosition and YPosition from each .ims file's metadata,
+    normalizes the positions, and applies increments based on overlap percentage
+    to ensure proper tile spacing in the final stitched volume.
 
     Args:
         output_h5_file (str): Full path to the output H5 file where the BDV/XML file and associated tile data will be saved.
-        fov_list (list of str): List of file paths to the FOV TIFF images.
-        offset_array (np.ndarray): Array of shape (n, 3) containing the offsets [column, row, z] for each FOV.
-        nchannels (int, optional): Number of channels in each FOV image. Default is 2.
-        increment_scale (float, optional): Scale factor used to compute increments for unique offset values. Default is 1900.0.
+        ims_files (List[str]): List of file paths to the .ims files.
+        nchannels (int, optional): Number of channels in each .ims file. Default is 2.
+        overlap_percentage (float, optional): Overlap percentage between the tiles. Default is 0.05.
+        voxel_size (Optional[List[float]], optional): Voxel size as [z, y, x]. If None, uses default [0.4, 0.1507, 0.1507].
 
     Returns:
         str: The path to the created BDV/XML file.
@@ -51,41 +47,28 @@ def create_bdv_xml(
         Exception: If an error occurs during file I/O or BDV/XML file creation.
     """
     try:
-        # Helper function: Compute increments based on unique values in a coordinate array.
-        def apply_increments(coordinate):
-            unique_vals, inverse_indices = np.unique(coordinate, return_inverse=True)
-            increments = np.zeros_like(unique_vals, dtype=np.float64)
-            # For each unique value (except the first), add an increment proportional to its rank.
-            increments[1:] = increment_scale * np.arange(1, len(unique_vals))
-            return increments[inverse_indices]
+        # Set default voxel size if not provided
+        if voxel_size is None:
+            voxel_size = [0.4, 0.1507, 0.1507]
 
-        # Adjust the offsets for column and row positions.
-        # Note: The offset_array is assumed to be [column, row, z].
-        adjusted_offsets = offset_array.copy()
-        adjusted_offsets[:, 0] += apply_increments(
-            adjusted_offsets[:, 0]
-        )  # Adjust column positions.
-        adjusted_offsets[:, 1] += apply_increments(
-            adjusted_offsets[:, 1]
-        )  # Adjust row positions.
-        print(adjusted_offsets, flush=True)
+        # Prepare offsets from .ims files
+        print("Preparing offsets from .ims files...")
+        adjusted_offsets = prepare_offsets_from_ims_files(ims_files, overlap_percentage)
+        print("Adjusted offsets:", adjusted_offsets, flush=True)
 
-        # Initialize the BDV writer with the specified number of FOVs, channels, and voxel size.
+        # Initialize the BDV writer with the specified number of files, channels, and voxel size.
         bdv_writer = BdvWriter(
-            output_h5_file, ntiles=len(fov_list), nchannels=nchannels, overwrite=True
+            output_h5_file, ntiles=len(ims_files), nchannels=nchannels, overwrite=True
         )
 
-        # Process each FOV file.
-        for i, fov_file in tqdm(
-            enumerate(fov_list), total=len(fov_list), desc="Processing FOVs"
+        # Process each .ims file.
+        for i, ims_file in tqdm(
+            enumerate(ims_files), total=len(ims_files), desc="Processing .ims files"
         ):
-            # Read the multi-channel TIFF image (assumed shape: [z, channels, y, x]).
-            fov_image = tifffile.imread(fov_file)
-
-            # Append each channel view for the current FOV.
+            # Process each channel for the current .ims file.
             for channel_index in range(nchannels):
-                # Extract the tile for the given channel.
-                tile = fov_image[:, channel_index, :, :]
+                # Extract the dataset for the given channel from the .ims file.
+                tile = extract_dataset_from_ims(ims_file, channel_index)
 
                 # Create a 3x4 affine transformation matrix from an identity matrix and set its translation.
                 unit_matrix = np.eye(4)[:3, :].copy()
@@ -103,12 +86,12 @@ def create_bdv_xml(
         # Write the BDV/XML file and close the writer.
         bdv_writer.write_xml()
         bdv_writer.close()
-        print(f"BDV/XML file successfully created in {output_h5_file}")
+        print(f"BDV/XML file successfully created from .ims files in {output_h5_file}")
         xml_path, _ = os.path.splitext(output_h5_file)
         return xml_path + ".xml"
 
     except Exception as e:
-        print(f"Error during BDV/XML creation: {e}")
+        print(f"Error during BDV/XML creation from .ims files: {e}")
         raise
 
 
@@ -183,7 +166,7 @@ def blend_tiles(
     ts = Tileset(voxel_size)
     ts.init_from_bdv(xml_file)
     total_tiles = len(ts[:])
-    group_size = int(total_tiles / 2)
+    group_size = int(total_tiles / len(channels))
     output_paths = []
     # Process tiles in groups.
     for i in range(0, total_tiles, group_size):

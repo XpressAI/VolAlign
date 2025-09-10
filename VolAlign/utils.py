@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple, Union
 
+import h5py
 import numpy as np
 import tifffile
 import zarr
@@ -125,6 +126,107 @@ def _calculate_safe_chunks(
         return (min(max_z_slices, shape[0]),) + shape[1:]
     else:
         return (min(chunk_size, shape[0]),) + shape[1:]
+
+
+def bytes_to_float(b_array):
+    """Converts an array of bytes to a float."""
+    return float(''.join([b.decode() for b in b_array]))
+
+
+def extract_positions(file_path):
+    """Extracts XPosition and YPosition from a .ims file.
+
+    Args:
+    file_path (str): Path to the .ims file.
+
+    Returns:
+    tuple: (XPosition, YPosition, ZPosition) as floats or None if not found or on error.
+    """
+    try:
+        with h5py.File(file_path, 'r') as file:
+            if 'DataSetInfo/CustomData' in file:
+                custom_data = file['DataSetInfo/CustomData']
+                positions = {}
+                for attr_name in ['XPosition', 'YPosition']:
+                    if attr_name in custom_data.attrs:
+                        attr_value = custom_data.attrs[attr_name]
+                        positions[attr_name] = bytes_to_float(attr_value)
+                    else:
+                        positions[attr_name] = None  # Attribute not found
+                return positions.get('XPosition'), positions.get('YPosition'), 0
+            else:
+                print("No 'CustomData' found in 'DataSetInfo'")
+                return None, None, None
+    except Exception as e:
+        print(f"Failed to extract positions due to an error: {e}")
+        return None, None, None
+
+
+def extract_dataset_from_ims(file_path, channel):
+    """Extracts dataset from .ims file for a specific channel.
+    
+    Args:
+        file_path (str): Path to the .ims file.
+        channel (int): Channel index to extract.
+        
+    Returns:
+        np.ndarray: The extracted volume data.
+    """
+    with h5py.File(file_path, 'r') as file:
+        # Directly access the Data which seems to contain the whole volume
+        base_path = '/DataSet/ResolutionLevel 0/TimePoint 0/Channel {}/Data'.format(channel)
+        
+        # Assuming this path directly contains the volume
+        if base_path in file:
+            volume = file[base_path][:]
+            print(f"Directly extracted channel {channel} volume shape: {volume.shape}")
+            return volume
+        else:
+            raise ValueError(f"Channel {channel} not found in {file_path}")
+
+
+def prepare_offsets_from_ims_files(ims_files, overlap_percentage=0.05):
+    """Prepares offset array from .ims files by extracting positions.
+    
+    Args:
+        ims_files (List[str]): List of .ims file paths.
+        overlap_percentage (float): Overlap percentage between tiles for calculating increments.
+        
+    Returns:
+        np.ndarray: Array of offsets with shape (n, 3) containing [x, y, z] positions.
+    """
+    offsets = []
+    
+    def get_offset(filename):
+        x_pos, y_pos, z_pos = extract_positions(filename)
+        return [x_pos if x_pos is not None else 0.0,
+                y_pos if y_pos is not None else 0.0,
+                z_pos if z_pos is not None else 0.0]
+    
+    for file_path in tqdm(ims_files, desc="Extracting positions from .ims files"):
+        offsets.append(get_offset(file_path))
+    
+    offsets = np.array(offsets)
+    # Normalize offsets to start from zero
+    offsets = offsets - np.min(offsets, axis=0)
+    
+    # Calculate increment scale from overlap percentage
+    increment_scale = (1 - overlap_percentage) * 2048
+    
+    # Apply increments for unique x and y values
+    def apply_increments(column):
+        unique_values, inverse_indices = np.unique(column, return_inverse=True)
+        increments = np.zeros_like(unique_values, dtype=np.float64)
+        # Compute the increment only for the unique ranks
+        increments[1:] = increment_scale * np.arange(1, len(unique_values))
+        # Apply the increments using the inverse indices to broadcast the increment back to the original array shape
+        return increments[inverse_indices]
+    
+    # Modify x and y values in the array
+    offsets[:, 0] += apply_increments(offsets[:, 0])
+    offsets[:, 1] += apply_increments(offsets[:, 1])
+    
+    return offsets
 
 
 # =============================================================================
