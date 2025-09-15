@@ -59,38 +59,48 @@ def blend_ind(
     def feather_mask(shape, pad=16):
         """Create feathering mask that downweights edges to reduce seams."""
         z, y, x = shape
+
         def ramp(n):
             r = np.minimum(np.arange(n), np.arange(n)[::-1]).astype(np.float32)
             return np.clip(r / max(1, pad), 0, 1)
-        wz, wy, wx = ramp(z)[:,None,None], ramp(y)[None,:,None], ramp(x)[None,None,:]
+
+        wz, wy, wx = (
+            ramp(z)[:, None, None],
+            ramp(y)[None, :, None],
+            ramp(x)[None, None, :],
+        )
         return wz * wy * wx
 
     try:
         # Analyze tile statistics using robust percentiles
         tile_stats = []
         global_p99_values = []
-        
+
         for idx, pic in enumerate(pictures):
             # Use robust percentiles instead of min/max
             p1 = float(np.percentile(pic, 1.0))
             p99 = float(np.percentile(pic, 99.9))
-            
+
             # Compute SNR on clipped data for better quality assessment
             clipped = np.clip(pic.astype(np.float32), p1, p99)
             mean_clipped = float(clipped.mean())
             std_clipped = float(clipped.std())
             snr = (mean_clipped - p1) / (std_clipped + 1e-6) if std_clipped > 0 else 0
-            
-            tile_stats.append({
-                'p1': p1,
-                'p99': p99,
-                'mean_clipped': mean_clipped,
-                'std_clipped': std_clipped,
-                'snr': snr
-            })
+
+            tile_stats.append(
+                {
+                    "p1": p1,
+                    "p99": p99,
+                    "mean_clipped": mean_clipped,
+                    "std_clipped": std_clipped,
+                    "snr": snr,
+                }
+            )
             global_p99_values.append(p99)
-            
-            print(f"Tile {idx} - p99: {p99:.0f}, p1: {p1:.0f}, mean: {mean_clipped:.1f}, SNR: {snr:.2f}")
+
+            print(
+                f"Tile {idx} - p99: {p99:.0f}, p1: {p1:.0f}, mean: {mean_clipped:.1f}, SNR: {snr:.2f}"
+            )
 
         # Global reference based on median of p99 values
         global_ref = float(np.median(global_p99_values)) if global_p99_values else 1.0
@@ -101,14 +111,16 @@ def blend_ind(
         if normalize_intensity:
             print("Applying robust percentile-based normalization...")
             for idx, (pic, stats) in enumerate(zip(pictures, tile_stats)):
-                p1, p99 = stats['p1'], stats['p99']
-                snr = stats['snr']
-                
+                p1, p99 = stats["p1"], stats["p99"]
+                snr = stats["snr"]
+
                 # Determine tile quality using robust metrics
-                signal_ratio = stats['p99'] / (global_ref + 1e-6)
-                is_low_signal = signal_ratio < noise_threshold  # Now using noise_threshold properly
+                signal_ratio = stats["p99"] / (global_ref + 1e-6)
+                is_low_signal = (
+                    signal_ratio < noise_threshold
+                )  # Now using noise_threshold properly
                 is_noisy = snr < 2.0
-                
+
                 if p99 > p1:
                     if is_low_signal and is_noisy:
                         # Keep original values for very poor quality tiles
@@ -118,39 +130,54 @@ def blend_ind(
                         # Conservative normalization based on tile's own dynamic range
                         dynamic_range = p99 - p1
                         target_max = min(65535.0, dynamic_range * 0.3)
-                        normalized = ((pic.astype(np.float32) - p1) / max(1.0, dynamic_range)) * target_max
+                        normalized = (
+                            (pic.astype(np.float32) - p1) / max(1.0, dynamic_range)
+                        ) * target_max
                         normalized = np.clip(normalized, 0.0, 65535.0).astype(np.uint16)
-                        print(f"Tile {idx}: Conservative normalization (target_max: {target_max:.0f})")
+                        print(
+                            f"Tile {idx}: Conservative normalization (target_max: {target_max:.0f})"
+                        )
                     else:
                         # Full normalization for good quality tiles
-                        normalized = ((pic.astype(np.float32) - p1) / (p99 - p1) * 65535.0)
+                        normalized = (
+                            (pic.astype(np.float32) - p1) / (p99 - p1) * 65535.0
+                        )
                         normalized = np.clip(normalized, 0.0, 65535.0).astype(np.uint16)
                         print(f"Tile {idx}: Full normalization applied")
                 else:
                     # Handle flat tiles
                     normalized = pic.astype(np.uint16)
                     print(f"Tile {idx}: No normalization (flat tile)")
-                
+
                 normalized_pictures.append(normalized)
         else:
             normalized_pictures = [pic.astype(np.uint16) for pic in pictures]
 
         # Determine the overall Z, Y, and X ranges with proper subpixel handling
         min_z = min(offset[2] for offset in offsets)
-        max_z = max(offset[2] + tile.shape[0] for offset, tile in zip(offsets, normalized_pictures))
+        max_z = max(
+            offset[2] + tile.shape[0]
+            for offset, tile in zip(offsets, normalized_pictures)
+        )
         total_z_range = int(np.ceil(max_z - min_z))
 
         min_y = min(offset[1] for offset in offsets)
-        max_y = max(offset[1] + tile.shape[1] for offset, tile in zip(offsets, normalized_pictures))
+        max_y = max(
+            offset[1] + tile.shape[1]
+            for offset, tile in zip(offsets, normalized_pictures)
+        )
         total_y_range = int(np.ceil(max_y - min_y))
 
         min_x = min(offset[0] for offset in offsets)
-        max_x = max(offset[0] + tile.shape[2] for offset, tile in zip(offsets, normalized_pictures))
+        max_x = max(
+            offset[0] + tile.shape[2]
+            for offset, tile in zip(offsets, normalized_pictures)
+        )
         total_x_range = int(np.ceil(max_x - min_x))
 
         # Initialize the composite image
         newpic_shape = (total_z_range, total_y_range, total_x_range)
-        
+
         if blend_method == "overwrite":
             # Legacy behavior - simple overwrite with proper rounding
             newpic = np.zeros(newpic_shape, dtype=np.uint16)
@@ -167,7 +194,7 @@ def blend_ind(
                 update_range_x = slice(start_x, start_x + tile.shape[2])
 
                 newpic[update_range_z, update_range_y, update_range_x] = tile
-                
+
         elif blend_method == "max":
             # Maximum intensity projection with proper rounding
             newpic = np.zeros(newpic_shape, dtype=np.uint16)
@@ -186,12 +213,12 @@ def blend_ind(
                 newpic[update_range_z, update_range_y, update_range_x] = np.maximum(
                     newpic[update_range_z, update_range_y, update_range_x], tile
                 )
-                
+
         elif blend_method == "weighted_average":
             # Feathered weighted average blending with robust statistics
             newpic = np.zeros(newpic_shape, dtype=np.float32)
             weight_map = np.zeros(newpic_shape, dtype=np.float32)
-            
+
             for tile_idx, (off, tile) in enumerate(zip(offsets, normalized_pictures)):
                 start_z = int(round(off[2] - min_z))
                 start_y = int(round(off[1] - min_y))
@@ -207,79 +234,88 @@ def blend_ind(
                 # Create quality-based weight with feathering using robust statistics
                 if tile_idx < len(tile_stats):
                     stats = tile_stats[tile_idx]
-                    p99 = stats['p99']
-                    snr = stats['snr']
-                    
+                    p99 = stats["p99"]
+                    snr = stats["snr"]
+
                     # Weight based on robust intensity and signal quality metrics
                     intensity_weight = max(0.1, min(1.0, p99 / (global_ref + 1e-6)))
                     quality_weight = max(0.1, min(1.0, snr / 5.0))
                     combined_weight = intensity_weight * quality_weight
-                    
+
                     # Apply feathering to reduce seams
                     edge_weight = feather_mask(tile.shape, feather_pad)
                     tile_weight = combined_weight * edge_weight
-                    
-                    print(f"Tile {tile_idx} weight: intensity={intensity_weight:.3f}, quality={quality_weight:.3f}, combined={combined_weight:.3f}")
+
+                    print(
+                        f"Tile {tile_idx} weight: intensity={intensity_weight:.3f}, quality={quality_weight:.3f}, combined={combined_weight:.3f}"
+                    )
                 else:
                     # Fallback weight with feathering
                     tile_weight = feather_mask(tile.shape, feather_pad) * 0.1
-                
+
                 # Accumulate weighted values
-                newpic[update_range_z, update_range_y, update_range_x] += tile.astype(np.float32) * tile_weight
-                weight_map[update_range_z, update_range_y, update_range_x] += tile_weight
+                newpic[update_range_z, update_range_y, update_range_x] += (
+                    tile.astype(np.float32) * tile_weight
+                )
+                weight_map[
+                    update_range_z, update_range_y, update_range_x
+                ] += tile_weight
 
             # Free memory by deleting normalized_pictures after accumulation is complete
             del normalized_pictures
             print("Starting chunked processing for memory optimization")
-            
+
             # Process the large newpic array in chunks to reduce memory footprint
             total_z_slices = newpic.shape[0]
-            
+
             # Create output array for final result
             out16 = np.empty_like(newpic, dtype=np.uint16)
-            
+
             # Process in chunks along Z-axis
-            for z_start in tqdm(range(0, total_z_slices, chunk_size), desc="Processing chunks"):
+            for z_start in tqdm(
+                range(0, total_z_slices, chunk_size), desc="Processing chunks"
+            ):
                 z_end = min(z_start + chunk_size, total_z_slices)
-                
+
                 print(f"Processing chunk {z_start}:{z_end}")
-                
+
                 # Extract chunks for processing
                 newpic_chunk = newpic[z_start:z_end]
                 weight_chunk = weight_map[z_start:z_end]
-                
+
                 # Normalize by weights (in-place on chunk)
                 with np.errstate(divide="ignore", invalid="ignore"):
                     newpic_chunk /= weight_chunk
-                
+
                 # Handle NaN/inf values in chunk
                 np.nan_to_num(newpic_chunk, nan=0.0, posinf=0.0, neginf=0.0, copy=False)
-                
+
                 # Clip values to valid range (in-place on chunk)
                 np.clip(newpic_chunk, 0.0, 65535.0, out=newpic_chunk)
-                
+
                 # Round to nearest integer (in-place on chunk)
                 newpic_chunk.round(out=newpic_chunk)
-                
+
                 # Convert to uint16 and store in output array
                 out16[z_start:z_end] = newpic_chunk.astype(np.uint16)
-                
+
                 # Clear chunk references to free memory
                 del newpic_chunk, weight_chunk
-            
+
             print("Chunked processing complete")
-            
+
             # Free weight_map and newpic memory
             del weight_map, newpic
             newpic = out16
 
-            
         else:
             raise ValueError(f"Unknown blend_method: {blend_method}")
 
-        print(f"Blending complete using method '{blend_method}' with intensity normalization: {normalize_intensity}")
+        print(
+            f"Blending complete using method '{blend_method}' with intensity normalization: {normalize_intensity}"
+        )
         return newpic
-        
+
     except Exception as e:
         raise RuntimeError(f"Unexpected error occurred during image blending: {e}")
 
@@ -318,7 +354,7 @@ def _calculate_safe_chunks(
 
 def bytes_to_float(b_array):
     """Converts an array of bytes to a float."""
-    return float(''.join([b.decode() for b in b_array]))
+    return float("".join([b.decode() for b in b_array]))
 
 
 def extract_positions(file_path):
@@ -331,17 +367,17 @@ def extract_positions(file_path):
     tuple: (XPosition, YPosition, ZPosition) as floats or None if not found or on error.
     """
     try:
-        with h5py.File(file_path, 'r') as file:
-            if 'DataSetInfo/CustomData' in file:
-                custom_data = file['DataSetInfo/CustomData']
+        with h5py.File(file_path, "r") as file:
+            if "DataSetInfo/CustomData" in file:
+                custom_data = file["DataSetInfo/CustomData"]
                 positions = {}
-                for attr_name in ['XPosition', 'YPosition']:
+                for attr_name in ["XPosition", "YPosition"]:
                     if attr_name in custom_data.attrs:
                         attr_value = custom_data.attrs[attr_name]
                         positions[attr_name] = bytes_to_float(attr_value)
                     else:
                         positions[attr_name] = None  # Attribute not found
-                return positions.get('XPosition'), positions.get('YPosition'), 0
+                return positions.get("XPosition"), positions.get("YPosition"), 0
             else:
                 print("No 'CustomData' found in 'DataSetInfo'")
                 return None, None, None
@@ -352,18 +388,20 @@ def extract_positions(file_path):
 
 def extract_dataset_from_ims(file_path, channel):
     """Extracts dataset from .ims file for a specific channel.
-    
+
     Args:
         file_path (str): Path to the .ims file.
         channel (int): Channel index to extract.
-        
+
     Returns:
         np.ndarray: The extracted volume data.
     """
-    with h5py.File(file_path, 'r') as file:
+    with h5py.File(file_path, "r") as file:
         # Directly access the Data which seems to contain the whole volume
-        base_path = '/DataSet/ResolutionLevel 0/TimePoint 0/Channel {}/Data'.format(channel)
-        
+        base_path = "/DataSet/ResolutionLevel 0/TimePoint 0/Channel {}/Data".format(
+            channel
+        )
+
         # Assuming this path directly contains the volume
         if base_path in file:
             volume = file[base_path][:]
@@ -375,32 +413,34 @@ def extract_dataset_from_ims(file_path, channel):
 
 def prepare_offsets_from_ims_files(ims_files, overlap_percentage=0.05):
     """Prepares offset array from .ims files by extracting positions.
-    
+
     Args:
         ims_files (List[str]): List of .ims file paths.
         overlap_percentage (float): Overlap percentage between tiles for calculating increments.
-        
+
     Returns:
         np.ndarray: Array of offsets with shape (n, 3) containing [x, y, z] positions.
     """
     offsets = []
-    
+
     def get_offset(filename):
         x_pos, y_pos, z_pos = extract_positions(filename)
-        return [x_pos if x_pos is not None else 0.0,
-                y_pos if y_pos is not None else 0.0,
-                z_pos if z_pos is not None else 0.0]
-    
+        return [
+            x_pos if x_pos is not None else 0.0,
+            y_pos if y_pos is not None else 0.0,
+            z_pos if z_pos is not None else 0.0,
+        ]
+
     for file_path in tqdm(ims_files, desc="Extracting positions from .ims files"):
         offsets.append(get_offset(file_path))
-    
+
     offsets = np.array(offsets)
     # Normalize offsets to start from zero
     offsets = offsets - np.min(offsets, axis=0)
-    
+
     # Calculate increment scale from overlap percentage
     increment_scale = (1 - overlap_percentage) * 2048
-    
+
     # Apply increments for unique x and y values
     def apply_increments(column):
         unique_values, inverse_indices = np.unique(column, return_inverse=True)
@@ -409,11 +449,11 @@ def prepare_offsets_from_ims_files(ims_files, overlap_percentage=0.05):
         increments[1:] = increment_scale * np.arange(1, len(unique_values))
         # Apply the increments using the inverse indices to broadcast the increment back to the original array shape
         return increments[inverse_indices]
-    
+
     # Modify x and y values in the array
     offsets[:, 0] += apply_increments(offsets[:, 0])
     offsets[:, 1] += apply_increments(offsets[:, 1])
-    
+
     return offsets
 
 
