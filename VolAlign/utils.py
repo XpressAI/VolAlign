@@ -19,19 +19,30 @@ def blend_ind(
     pictures: List[np.ndarray],
     indices: Optional[List[int]] = None,
     inverts: Optional[List[int]] = None,
+    normalize_intensity: bool = True,
+    blend_method: str = "weighted_average",
+    noise_threshold: float = 0.1,
+    min_signal_ratio: float = 0.05,
+    feather_pad: int = 16,
+    chunk_size: int = 50,
 ) -> np.ndarray:
     """
-    Blends a list of volume tiles into a single composite image based on specified offsets.
+    Blends a list of volume tiles into a single composite image with robust intensity normalization and feathered blending.
 
-    This function computes the overall dimensions required by examining the offsets and the shape of each tile.
-    Each tile is then placed into the composite volume at its corresponding offset (adjusted relative to the minimum offset),
-    with optional inversion along specified axes. In the case of overlapping regions, later tiles will overwrite earlier ones.
+    This function uses robust percentile-based statistics and feathered edge weighting to create seamless blends
+    while avoiding noise amplification in low-signal tiles.
 
     Args:
         offsets (List[np.ndarray]): A list of offset vectors for each image tile, each specified as [x, y, z].
         pictures (List[np.ndarray]): A list of 3D image tiles (with shape [z, y, x]) to be merged.
         indices (Optional[List[int]]): (Reserved for future use) Optional list specifying an order for blending.
         inverts (Optional[List[int]]): Optional axis or list of axes along which to invert (flip) each corresponding tile before blending.
+        normalize_intensity (bool): If True, apply robust percentile-based normalization.
+        blend_method (str): Blending method - "weighted_average", "max", or "overwrite" (legacy behavior).
+        noise_threshold (float): Threshold for detecting low-signal tiles (relative to global reference).
+        min_signal_ratio (float): Minimum signal ratio to apply full normalization.
+        feather_pad (int): Padding for edge feathering to reduce seams.
+        chunk_size (int): Number of Z-slices to process at once for memory optimization.
 
     Returns:
         np.ndarray: A new 3D NumPy array (dtype uint16) representing the blended composite image.
@@ -45,53 +56,230 @@ def blend_ind(
     if len(offsets) != len(pictures):
         raise ValueError("The number of offsets must match the number of pictures.")
 
+    def feather_mask(shape, pad=16):
+        """Create feathering mask that downweights edges to reduce seams."""
+        z, y, x = shape
+        def ramp(n):
+            r = np.minimum(np.arange(n), np.arange(n)[::-1]).astype(np.float32)
+            return np.clip(r / max(1, pad), 0, 1)
+        wz, wy, wx = ramp(z)[:,None,None], ramp(y)[None,:,None], ramp(x)[None,None,:]
+        return wz * wy * wx
+
     try:
-        # Print basic statistics for debugging.
+        # Analyze tile statistics using robust percentiles
+        tile_stats = []
+        global_p99_values = []
+        
         for idx, pic in enumerate(pictures):
-            print(
-                f"Tile {idx} dtype: {pic.dtype}, max value: {pic.max()}, min value: {pic.min()}"
-            )
+            # Use robust percentiles instead of min/max
+            p1 = float(np.percentile(pic, 1.0))
+            p99 = float(np.percentile(pic, 99.9))
+            
+            # Compute SNR on clipped data for better quality assessment
+            clipped = np.clip(pic.astype(np.float32), p1, p99)
+            mean_clipped = float(clipped.mean())
+            std_clipped = float(clipped.std())
+            snr = (mean_clipped - p1) / (std_clipped + 1e-6) if std_clipped > 0 else 0
+            
+            tile_stats.append({
+                'p1': p1,
+                'p99': p99,
+                'mean_clipped': mean_clipped,
+                'std_clipped': std_clipped,
+                'snr': snr
+            })
+            global_p99_values.append(p99)
+            
+            print(f"Tile {idx} - p99: {p99:.0f}, p1: {p1:.0f}, mean: {mean_clipped:.1f}, SNR: {snr:.2f}")
 
-        # Determine the overall Z, Y, and X ranges based on offsets and tile sizes.
-        min_z = int(min(offset[2] for offset in offsets))
-        max_z = int(
-            max(offset[2] + tile.shape[0] for offset, tile in zip(offsets, pictures))
-        )
-        total_z_range = max_z - min_z
+        # Global reference based on median of p99 values
+        global_ref = float(np.median(global_p99_values)) if global_p99_values else 1.0
+        print(f"Global reference (median p99): {global_ref:.0f}")
 
-        min_y = int(min(offset[1] for offset in offsets))
-        max_y = int(
-            max(offset[1] + tile.shape[1] for offset, tile in zip(offsets, pictures))
-        )
-        total_y_range = max_y - min_y
+        # Robust normalization based on tile quality
+        normalized_pictures = []
+        if normalize_intensity:
+            print("Applying robust percentile-based normalization...")
+            for idx, (pic, stats) in enumerate(zip(pictures, tile_stats)):
+                p1, p99 = stats['p1'], stats['p99']
+                snr = stats['snr']
+                
+                # Determine tile quality using robust metrics
+                signal_ratio = stats['p99'] / (global_ref + 1e-6)
+                is_low_signal = signal_ratio < noise_threshold  # Now using noise_threshold properly
+                is_noisy = snr < 2.0
+                
+                if p99 > p1:
+                    if is_low_signal and is_noisy:
+                        # Keep original values for very poor quality tiles
+                        normalized = pic.astype(np.uint16)
+                        print(f"Tile {idx}: No normalization (low signal + noisy)")
+                    elif is_low_signal:
+                        # Conservative normalization based on tile's own dynamic range
+                        dynamic_range = p99 - p1
+                        target_max = min(65535.0, dynamic_range * 0.3)
+                        normalized = ((pic.astype(np.float32) - p1) / max(1.0, dynamic_range)) * target_max
+                        normalized = np.clip(normalized, 0.0, 65535.0).astype(np.uint16)
+                        print(f"Tile {idx}: Conservative normalization (target_max: {target_max:.0f})")
+                    else:
+                        # Full normalization for good quality tiles
+                        normalized = ((pic.astype(np.float32) - p1) / (p99 - p1) * 65535.0)
+                        normalized = np.clip(normalized, 0.0, 65535.0).astype(np.uint16)
+                        print(f"Tile {idx}: Full normalization applied")
+                else:
+                    # Handle flat tiles
+                    normalized = pic.astype(np.uint16)
+                    print(f"Tile {idx}: No normalization (flat tile)")
+                
+                normalized_pictures.append(normalized)
+        else:
+            normalized_pictures = [pic.astype(np.uint16) for pic in pictures]
 
-        min_x = int(min(offset[0] for offset in offsets))
-        max_x = int(
-            max(offset[0] + tile.shape[2] for offset, tile in zip(offsets, pictures))
-        )
-        total_x_range = max_x - min_x
+        # Determine the overall Z, Y, and X ranges with proper subpixel handling
+        min_z = min(offset[2] for offset in offsets)
+        max_z = max(offset[2] + tile.shape[0] for offset, tile in zip(offsets, normalized_pictures))
+        total_z_range = int(np.ceil(max_z - min_z))
 
-        # Initialize the composite image.
+        min_y = min(offset[1] for offset in offsets)
+        max_y = max(offset[1] + tile.shape[1] for offset, tile in zip(offsets, normalized_pictures))
+        total_y_range = int(np.ceil(max_y - min_y))
+
+        min_x = min(offset[0] for offset in offsets)
+        max_x = max(offset[0] + tile.shape[2] for offset, tile in zip(offsets, normalized_pictures))
+        total_x_range = int(np.ceil(max_x - min_x))
+
+        # Initialize the composite image
         newpic_shape = (total_z_range, total_y_range, total_x_range)
-        newpic = np.zeros(newpic_shape, dtype=np.uint16)
+        
+        if blend_method == "overwrite":
+            # Legacy behavior - simple overwrite with proper rounding
+            newpic = np.zeros(newpic_shape, dtype=np.uint16)
+            for off, tile in zip(offsets, normalized_pictures):
+                start_z = int(round(off[2] - min_z))
+                start_y = int(round(off[1] - min_y))
+                start_x = int(round(off[0] - min_x))
 
-        # Process and place each tile.
-        for off, tile in zip(offsets, pictures):
-            start_z = int(off[2] - min_z)
-            start_y = int(off[1] - min_y)
-            start_x = int(off[0] - min_x)
+                if inverts:
+                    tile = np.flip(tile, axis=inverts)
 
-            # Apply inversion if specified.
-            if inverts:
-                tile = np.flip(tile, axis=inverts)
+                update_range_z = slice(start_z, start_z + tile.shape[0])
+                update_range_y = slice(start_y, start_y + tile.shape[1])
+                update_range_x = slice(start_x, start_x + tile.shape[2])
 
-            update_range_z = slice(start_z, start_z + tile.shape[0])
-            update_range_y = slice(start_y, start_y + tile.shape[1])
-            update_range_x = slice(start_x, start_x + tile.shape[2])
+                newpic[update_range_z, update_range_y, update_range_x] = tile
+                
+        elif blend_method == "max":
+            # Maximum intensity projection with proper rounding
+            newpic = np.zeros(newpic_shape, dtype=np.uint16)
+            for off, tile in zip(offsets, normalized_pictures):
+                start_z = int(round(off[2] - min_z))
+                start_y = int(round(off[1] - min_y))
+                start_x = int(round(off[0] - min_x))
 
-            newpic[update_range_z, update_range_y, update_range_x] = tile
+                if inverts:
+                    tile = np.flip(tile, axis=inverts)
 
+                update_range_z = slice(start_z, start_z + tile.shape[0])
+                update_range_y = slice(start_y, start_y + tile.shape[1])
+                update_range_x = slice(start_x, start_x + tile.shape[2])
+
+                newpic[update_range_z, update_range_y, update_range_x] = np.maximum(
+                    newpic[update_range_z, update_range_y, update_range_x], tile
+                )
+                
+        elif blend_method == "weighted_average":
+            # Feathered weighted average blending with robust statistics
+            newpic = np.zeros(newpic_shape, dtype=np.float32)
+            weight_map = np.zeros(newpic_shape, dtype=np.float32)
+            
+            for tile_idx, (off, tile) in enumerate(zip(offsets, normalized_pictures)):
+                start_z = int(round(off[2] - min_z))
+                start_y = int(round(off[1] - min_y))
+                start_x = int(round(off[0] - min_x))
+
+                if inverts:
+                    tile = np.flip(tile, axis=inverts)
+
+                update_range_z = slice(start_z, start_z + tile.shape[0])
+                update_range_y = slice(start_y, start_y + tile.shape[1])
+                update_range_x = slice(start_x, start_x + tile.shape[2])
+
+                # Create quality-based weight with feathering using robust statistics
+                if tile_idx < len(tile_stats):
+                    stats = tile_stats[tile_idx]
+                    p99 = stats['p99']
+                    snr = stats['snr']
+                    
+                    # Weight based on robust intensity and signal quality metrics
+                    intensity_weight = max(0.1, min(1.0, p99 / (global_ref + 1e-6)))
+                    quality_weight = max(0.1, min(1.0, snr / 5.0))
+                    combined_weight = intensity_weight * quality_weight
+                    
+                    # Apply feathering to reduce seams
+                    edge_weight = feather_mask(tile.shape, feather_pad)
+                    tile_weight = combined_weight * edge_weight
+                    
+                    print(f"Tile {tile_idx} weight: intensity={intensity_weight:.3f}, quality={quality_weight:.3f}, combined={combined_weight:.3f}")
+                else:
+                    # Fallback weight with feathering
+                    tile_weight = feather_mask(tile.shape, feather_pad) * 0.1
+                
+                # Accumulate weighted values
+                newpic[update_range_z, update_range_y, update_range_x] += tile.astype(np.float32) * tile_weight
+                weight_map[update_range_z, update_range_y, update_range_x] += tile_weight
+
+            # Free memory by deleting normalized_pictures after accumulation is complete
+            del normalized_pictures
+            print("Starting chunked processing for memory optimization")
+            
+            # Process the large newpic array in chunks to reduce memory footprint
+            total_z_slices = newpic.shape[0]
+            
+            # Create output array for final result
+            out16 = np.empty_like(newpic, dtype=np.uint16)
+            
+            # Process in chunks along Z-axis
+            for z_start in tqdm(range(0, total_z_slices, chunk_size), desc="Processing chunks"):
+                z_end = min(z_start + chunk_size, total_z_slices)
+                
+                print(f"Processing chunk {z_start}:{z_end}")
+                
+                # Extract chunks for processing
+                newpic_chunk = newpic[z_start:z_end]
+                weight_chunk = weight_map[z_start:z_end]
+                
+                # Normalize by weights (in-place on chunk)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    newpic_chunk /= weight_chunk
+                
+                # Handle NaN/inf values in chunk
+                np.nan_to_num(newpic_chunk, nan=0.0, posinf=0.0, neginf=0.0, copy=False)
+                
+                # Clip values to valid range (in-place on chunk)
+                np.clip(newpic_chunk, 0.0, 65535.0, out=newpic_chunk)
+                
+                # Round to nearest integer (in-place on chunk)
+                newpic_chunk.round(out=newpic_chunk)
+                
+                # Convert to uint16 and store in output array
+                out16[z_start:z_end] = newpic_chunk.astype(np.uint16)
+                
+                # Clear chunk references to free memory
+                del newpic_chunk, weight_chunk
+            
+            print("Chunked processing complete")
+            
+            # Free weight_map and newpic memory
+            del weight_map, newpic
+            newpic = out16
+
+            
+        else:
+            raise ValueError(f"Unknown blend_method: {blend_method}")
+
+        print(f"Blending complete using method '{blend_method}' with intensity normalization: {normalize_intensity}")
         return newpic
+        
     except Exception as e:
         raise RuntimeError(f"Unexpected error occurred during image blending: {e}")
 

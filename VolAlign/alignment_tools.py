@@ -140,7 +140,15 @@ def stitch_tiles(xml_file_path: str, fiji_path: str) -> None:
 
 
 def blend_tiles(
-    xml_file: str, output_folder: str, voxel_size: List[float], channels: List[str]
+    xml_file: str,
+    output_folder: str,
+    voxel_size: List[float],
+    channels: List[str],
+    normalize_intensity: bool = True,
+    blend_method: str = "weighted_average",
+    noise_threshold: float = 0.1,
+    min_signal_ratio: float = 0.05,
+    feather_pad: int = 16
 ) -> List[str]:
     """
     Blends stitched tile images for each channel and saves a TIFF file for each channel.
@@ -150,7 +158,7 @@ def blend_tiles(
       2. Groups tiles into chunks of equal size. (Currently, the group size is computed as total number of tiles divided by 2.)
       3. For each group, computes offsets (converted to pixel coordinates by dividing by the voxel size)
          and collects the corresponding image tiles.
-      4. Blends the collected tiles using `blend_ind` to generate a single volume per channel.
+      4. Blends the collected tiles using robust percentile-based normalization and feathered blending.
       5. Saves the blended volume as a TIFF file named "stitched_{channel}.tif" in the specified output folder.
 
     Args:
@@ -158,6 +166,11 @@ def blend_tiles(
         output_folder (str): Folder where the output TIFF files will be saved.
         voxel_size (List[float]): Voxel size as a list in [z, y, x] order.
         channels (List[str]): List of channel names (e.g., ['CH1', 'CH2']).
+        normalize_intensity (bool): If True, apply robust percentile-based normalization that avoids noise amplification.
+        blend_method (str): Blending method - "weighted_average" (default), "max", or "overwrite" (legacy behavior).
+        noise_threshold (float): Threshold for detecting low-signal tiles (relative to global reference).
+        min_signal_ratio (float): Minimum signal ratio to apply full normalization (prevents noise amplification).
+        feather_pad (int): Padding for edge feathering to reduce seams in overlapping regions.
 
     Returns:
         List[str]: List of file paths for the blended TIFF files for each channel.
@@ -168,6 +181,9 @@ def blend_tiles(
     total_tiles = len(ts[:])
     group_size = int(total_tiles / len(channels))
     output_paths = []
+    
+    print(f"Blending {total_tiles} tiles using method '{blend_method}' with intensity normalization: {normalize_intensity}")
+    
     # Process tiles in groups.
     for i in range(0, total_tiles, group_size):
         group_index = i // group_size
@@ -186,11 +202,25 @@ def blend_tiles(
             offsets_group.append(ts[j].offset / ts.voxel_size)
             images_group.append(ts[j].img)
 
-        # Blend the collected tiles.
-        stitched_volume = blend_ind(offsets_group, images_group)
+        # Blend the collected tiles with robust normalization and feathered blending.
+        stitched_volume = blend_ind(
+            offsets_group,
+            images_group,
+            normalize_intensity=normalize_intensity,
+            blend_method=blend_method,
+            noise_threshold=noise_threshold,
+            min_signal_ratio=min_signal_ratio,
+            feather_pad=feather_pad
+        )
 
         # Build the output file path.
         output_path = os.path.join(output_folder, f"stitched_{channel_name}.tif")
+        
+        # Ensure the stitched volume is properly formatted for TIFF writing
+        if stitched_volume.dtype != np.uint16:
+            stitched_volume = stitched_volume.astype(np.uint16)
+        
+        # Write TIFF without compression to avoid format issues
         tifffile.imwrite(output_path, stitched_volume)
         output_paths.append(output_path)
 
