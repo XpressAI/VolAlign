@@ -3,6 +3,7 @@ Shared application state management.
 """
 
 from typing import Optional
+
 from .config import get_config
 from .data_loader import DataLoader
 from .nuclei_processor import NucleiProcessor
