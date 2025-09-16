@@ -169,3 +169,22 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Nuclei Viewer specific ignores
+nuclei-viewer/viewer_venv/
+nuclei-viewer/frontend/node_modules/
+nuclei-viewer/frontend/build/
+nuclei-viewer/frontend/.env.local
+nuclei-viewer/frontend/.env.development.local
+nuclei-viewer/frontend/.env.test.local
+nuclei-viewer/frontend/.env.production.local
+nuclei-viewer/frontend/npm-debug.log*
+nuclei-viewer/frontend/yarn-debug.log*
+nuclei-viewer/frontend/yarn-error.log*
+nuclei-viewer/test_data/
+nuclei-viewer/*.log
+nuclei-viewer/backend/.env
+nuclei-viewer/backend/instance/
+nuclei-viewer/backend/config/current_config.yaml
+nuclei-viewer/.DS_Store
+nuclei-viewer/**/.DS_Store

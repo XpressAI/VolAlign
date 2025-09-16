@@ -1,0 +1,56 @@
+# Nuclei Viewer Configuration
+
+# Example configuration with zarr files in different directories:
+data:
+  segmentation:
+    file_path: "/path/to/experiment1/segmentation_labels.zarr"
+    array_key: null
+
+  dapi_channel:
+    file_path: "/path/to/experiment2/dapi_channel.zarr"
+    array_key: null
+
+  epitope_channels:
+    - name: "488nm"
+      file_path: "/path/to/experiment3/488nm_channel.zarr"
+      array_key: null
+      default_color: "#00ff00"
+    - name: "561nm"
+      file_path: "/path/to/experiment4/561nm_channel.zarr"
+      array_key: null
+      default_color: "#ff0000"
+
+processing:
+  # Nuclei processing parameters
+  min_object_size: 100  # Minimum nucleus size in voxels
+  pad_xy: 25           # XY padding around bounding boxes
+  max_objects_per_page: 10  # Number of nuclei to display per page
+  
+  # MIP generation parameters
+  mip_chunk_size: 50   # Z-slices to process at once
+  cache_mips: true     # Cache generated MIPs
+  
+  # Intensity scaling
+  auto_contrast: true
+  percentile_range: [1.0, 99.9]  # Percentiles for contrast adjustment
+
+server:
+  host: "127.0.0.1"
+  port: 8000
+  debug: true
+  cors_origins: ["http://localhost:3000"]  # Frontend development server
+
+ui:
+  # Default UI settings
+  default_opacity: 0.8
+  color_palette: 
+    - "#ff0000"  # Red
+    - "#00ff00"  # Green
+    - "#0000ff"  # Blue
+    - "#ffff00"  # Yellow
+    - "#ff00ff"  # Magenta
+    - "#00ffff"  # Cyan
+    - "#ff8000"  # Orange
+    - "#8000ff"  # Purple
+    - "#80ff00"  # Lime
+    - "#0080ff"  # Sky Blue
