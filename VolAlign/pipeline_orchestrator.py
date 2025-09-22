@@ -710,37 +710,72 @@ class MicroscopyProcessingPipeline:
 
     def create_registration_channels(
         self,
-        channel_405_path: str,
-        channel_488_path: str,
+        channel_paths: List[str],
         output_path: str,
         merge_strategy: Optional[str] = None,
     ) -> str:
         """
-        Merge 405nm and 488nm channels for robust registration.
+        Create registration channel from one or more input channels.
+
+        For single channel: copies the channel data
+        For multiple channels: merges them using the specified strategy
 
         Args:
-            channel_405_path (str): Path to 405nm channel Zarr volume
-            channel_488_path (str): Path to 488nm channel Zarr volume
-            output_path (str): Path for merged registration channel
-            merge_strategy (Optional[str]): Merging strategy ("mean", "max", "stack")
+            channel_paths (List[str]): List of channel paths to use for registration
+            output_path (str): Path for output registration channel
+            merge_strategy (Optional[str]): Merging strategy ("mean", "max", "stack", "single")
                                           If None, uses config value
 
         Returns:
-            str: Path to merged registration channel
+            str: Path to registration channel
         """
+        import shutil
+        from pathlib import Path
+
         if merge_strategy is None:
             merge_strategy = self.merge_strategy
 
-        print(f"Merging registration channels: {merge_strategy}")
+        output_path_obj = Path(output_path)
 
-        merge_zarr_channels(
-            channel_a_path=channel_405_path,
-            channel_b_path=channel_488_path,
-            output_path=output_path,
-            merge_strategy=merge_strategy,
-        )
+        # Handle single channel case
+        if len(channel_paths) == 1:
+            print(f"Using single channel for registration: {channel_paths[0]}")
 
-        return output_path
+            # Check if output already exists
+            if output_path_obj.exists():
+                print(f"Registration channel already exists: {output_path}")
+                return output_path
+
+            # Create parent directory if needed
+            output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+            # Copy the channel data
+            channel_path_obj = Path(channel_paths[0])
+            print(f"Copying registration channel: {channel_paths[0]} -> {output_path}")
+            shutil.copytree(channel_path_obj, output_path_obj)
+            print(f"Single channel registration data copied to: {output_path}")
+
+            return output_path
+
+        # Handle multiple channel case (original merging behavior)
+        elif len(channel_paths) == 2:
+            print(f"Merging registration channels using strategy: {merge_strategy}")
+
+            merge_zarr_channels(
+                channel_a_path=channel_paths[0],
+                channel_b_path=channel_paths[1],
+                output_path=output_path,
+                merge_strategy=merge_strategy,
+            )
+
+            return output_path
+
+        else:
+            raise ValueError(
+                f"Invalid number of registration channels: {len(channel_paths)}. "
+                "Expected 1 (single channel) or 2 (dual channel merging). "
+                f"Received channels: {channel_paths}"
+            )
 
     def initial_affine_registration(
         self,
@@ -766,26 +801,26 @@ class MicroscopyProcessingPipeline:
 
         print(f"Starting initial registration workflow: {registration_name}")
 
-        # Step 1: Create registration channels by merging configured channels
+        # Step 1: Create registration channels from configured channels
         fixed_reg_channel = reg_dir / f"{registration_name}_fixed_registration.zarr"
         moving_reg_channel = reg_dir / f"{registration_name}_moving_registration.zarr"
 
-        # Use configured registration channels
-        channel_a, channel_b = (
-            self.registration_channels[0],
-            self.registration_channels[1],
+        # Get channel paths for registration
+        fixed_channel_paths = [
+            fixed_round_data[ch] for ch in self.registration_channels
+        ]
+        moving_channel_paths = [
+            moving_round_data[ch] for ch in self.registration_channels
+        ]
+
+        self.create_registration_channels(
+            channel_paths=fixed_channel_paths,
+            output_path=str(fixed_reg_channel),
         )
 
         self.create_registration_channels(
-            fixed_round_data[channel_a],
-            fixed_round_data[channel_b],
-            str(fixed_reg_channel),
-        )
-
-        self.create_registration_channels(
-            moving_round_data[channel_a],
-            moving_round_data[channel_b],
-            str(moving_reg_channel),
+            channel_paths=moving_channel_paths,
+            output_path=str(moving_reg_channel),
         )
 
         # Step 2: Compute initial affine registration
