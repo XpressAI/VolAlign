@@ -10,6 +10,7 @@ import zarr
 from .distributed_processing import (
     apply_deformation_to_channels,
     compute_affine_registration,
+    compute_chunk_alignment,
     compute_deformation_field_registration,
     create_registration_summary,
     distributed_nuclei_segmentation,
@@ -136,6 +137,11 @@ class MicroscopyProcessingPipeline:
 
         self.merge_strategy = self.registration_config["merge_strategy"]
         self.registration_channels = self.registration_config["channels"]
+
+        # Chunk alignment configuration - optional
+        self.chunk_alignment_config = self.registration_config.get(
+            "chunk_alignment", {}
+        )
 
         # Segmentation parameters - required
         if "segmentation" not in self.config:
@@ -777,7 +783,7 @@ class MicroscopyProcessingPipeline:
                 f"Received channels: {channel_paths}"
             )
 
-    def initial_affine_registration(
+    def initial_global_alignment(
         self,
         fixed_round_data: Dict[str, str],
         moving_round_data: Dict[str, str],
@@ -785,7 +791,10 @@ class MicroscopyProcessingPipeline:
         registration_name: str,
     ) -> Dict[str, str]:
         """
-        Execute initial affine registration workflow: create registration channels and compute affine registration.
+        Execute initial global alignment workflow: create registration channels and compute global affine registration.
+
+        This method performs one-shot global alignment on downsampled volumes using traditional
+        affine registration methods. Suitable for datasets with primarily linear deformation.
 
         Args:
             fixed_round_data (Dict[str, str]): Fixed round channel paths
@@ -842,6 +851,133 @@ class MicroscopyProcessingPipeline:
 
         return init_registration_results
 
+    def initial_chunk_alignment(
+        self,
+        fixed_round_data: Dict[str, str],
+        moving_round_data: Dict[str, str],
+        registration_output_dir: str,
+        registration_name: str,
+        downsample_factors: Optional[Tuple[int, int, int]] = None,
+        interpolation_method: str = "linear",
+        alignment_kwargs: Optional[Dict] = None,
+    ) -> Dict[str, str]:
+        """
+        Execute initial chunk-based alignment workflow for handling non-linear deformation.
+
+        This method is designed for datasets with significant non-linear deformation that cannot
+        be handled effectively by traditional global alignment. It performs chunk-by-chunk processing:
+        1. Creation of registration channels from configured channels
+        2. Volume downsampling for efficient processing
+        3. Distributed chunk-based deformation field computation
+        4. Deformation field upsampling to original resolution
+
+        Args:
+            fixed_round_data (Dict[str, str]): Fixed round channel paths
+            moving_round_data (Dict[str, str]): Moving round channel paths
+            registration_output_dir (str): Directory for registration outputs
+            registration_name (str): Base name for registration files
+            downsample_factors (Optional[Tuple[int, int, int]]): Downsampling factors for (z, y, x)
+                                                               If None, uses (1, 3, 3)
+            interpolation_method (str): Interpolation method for upsampling ("linear", "bspline", "cubic")
+            alignment_kwargs (Optional[Dict]): Alignment parameters for chunk-based processing
+                                             If None, uses default {"blob_sizes": [8, 200], "use_gpu": True}
+
+        Returns:
+            Dict[str, str]: Dictionary with paths to distributed registration results
+        """
+        # Validate dependencies
+        try:
+            import SimpleITK as sitk
+            from bigstream.piecewise_align import (
+                distributed_piecewise_alignment_pipeline,
+            )
+            from bigstream.piecewise_transform import distributed_apply_transform
+        except ImportError as e:
+            raise ImportError(
+                f"Chunk-based alignment requires additional dependencies: {e}. "
+                "Please ensure bigstream and SimpleITK are installed."
+            )
+
+        reg_dir = Path(registration_output_dir)
+        reg_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"Starting chunk-based alignment workflow: {registration_name}")
+
+        # Validate parameters
+        if downsample_factors is not None:
+            if len(downsample_factors) != 3 or any(f < 1 for f in downsample_factors):
+                raise ValueError(
+                    f"downsample_factors must be a tuple of 3 positive integers, got: {downsample_factors}"
+                )
+
+        if interpolation_method not in ["linear", "bspline", "cubic"]:
+            print(
+                f"Warning: Unknown interpolation method '{interpolation_method}', using 'linear'"
+            )
+            interpolation_method = "linear"
+
+        # Step 1: Create registration channels from configured channels
+        fixed_reg_channel = reg_dir / f"{registration_name}_fixed_registration.zarr"
+        moving_reg_channel = reg_dir / f"{registration_name}_moving_registration.zarr"
+
+        # Get channel paths for registration
+        fixed_channel_paths = [
+            fixed_round_data[ch] for ch in self.registration_channels
+        ]
+        moving_channel_paths = [
+            moving_round_data[ch] for ch in self.registration_channels
+        ]
+
+        self.create_registration_channels(
+            channel_paths=fixed_channel_paths,
+            output_path=str(fixed_reg_channel),
+        )
+
+        self.create_registration_channels(
+            channel_paths=moving_channel_paths,
+            output_path=str(moving_reg_channel),
+        )
+
+        # Step 2: Set default parameters if not provided
+        if downsample_factors is None:
+            downsample_factors = (1, 3, 3)
+
+        if alignment_kwargs is None:
+            alignment_kwargs = {"blob_sizes": [2 * 4, 100 * 2], "use_gpu": True}
+
+        # Step 3: Compute chunk-based alignment (initial deformation field only)
+        print("Computing chunk-based initial deformation field...")
+        initial_deformation_field_path = compute_chunk_alignment(
+            fixed_zarr_path=str(fixed_reg_channel),
+            moving_zarr_path=str(moving_reg_channel),
+            output_directory=str(reg_dir),
+            output_name=registration_name,
+            voxel_spacing=self.voxel_spacing,
+            downsample_factors=downsample_factors,
+            interpolation_method=interpolation_method,
+            block_size=self.block_size,
+            alignment_kwargs=alignment_kwargs,
+            cluster_config=self.cluster_config,
+        )
+
+        # Step 4: Create a dummy affine matrix (identity) since chunk alignment handles the transformation
+        affine_matrix_path = reg_dir / f"{registration_name}_chunk_identity_matrix.txt"
+        identity_matrix = np.eye(4)[:3, :]  # 3x4 identity matrix
+        np.savetxt(affine_matrix_path, identity_matrix)
+
+        distributed_registration_results = {
+            "fixed_registration_channel": str(fixed_reg_channel),
+            "moving_registration_channel": str(moving_reg_channel),
+            "deformation_field": initial_deformation_field_path,
+            "affine_matrix": str(
+                affine_matrix_path
+            ),  # Identity matrix for compatibility
+            "registration_method": "chunk_alignment",
+        }
+
+        print(f"Chunk-based alignment completed: {registration_name}")
+        return distributed_registration_results
+
     def final_deformation_registration(
         self,
         fixed_registration_channel: str,
@@ -849,6 +985,8 @@ class MicroscopyProcessingPipeline:
         affine_matrix_path: str,
         registration_output_dir: str,
         registration_name: str,
+        use_chunk_alignment: bool = False,
+        initial_deformation_field_path: Optional[str] = None,
     ) -> Dict[str, str]:
         """
         Execute final deformation registration workflow: compute deformation field registration.
@@ -859,6 +997,9 @@ class MicroscopyProcessingPipeline:
             affine_matrix_path (str): Path to computed affine transformation matrix
             registration_output_dir (str): Directory for registration outputs
             registration_name (str): Base name for registration files
+            use_chunk_alignment (bool): Whether to use chunk-based alignment mode
+            initial_deformation_field_path (Optional[str]): Path to initial deformation field
+                                                           (required when use_chunk_alignment=True)
 
         Returns:
             Dict[str, str]: Dictionary with paths to final deformation registration results
@@ -878,6 +1019,8 @@ class MicroscopyProcessingPipeline:
             voxel_spacing=self.voxel_spacing,
             block_size=self.block_size,
             cluster_config=self.cluster_config,
+            use_chunk_alignment=use_chunk_alignment,
+            initial_deformation_field_path=initial_deformation_field_path,
         )
 
         deformation_field_path = reg_dir / f"{registration_name}_deformation_field.zarr"
@@ -913,8 +1056,8 @@ class MicroscopyProcessingPipeline:
 
         print(f"Starting registration workflow: {registration_name}")
 
-        # Step 1: Initial registration (create channels + affine registration)
-        init_results = self.initial_affine_registration(
+        # Step 1: Initial registration (create channels + global affine registration)
+        init_results = self.initial_global_alignment(
             fixed_round_data=fixed_round_data,
             moving_round_data=moving_round_data,
             registration_output_dir=registration_output_dir,

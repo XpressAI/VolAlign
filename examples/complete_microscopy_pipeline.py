@@ -8,7 +8,9 @@ including the new step tracking functionality.
 
 The pipeline includes:
 1. Data preparation (TIFF to Zarr conversion)
-2. Two-stage registration (affine + deformation field)
+2. Two-stage registration with two alignment approaches:
+   - Global alignment: Traditional one-shot affine registration (for linear deformation)
+   - Chunk alignment: Distributed chunk-by-chunk processing (for non-linear deformation)
 3. Distributed nuclei segmentation
 4. Channel alignment using computed transformations
 
@@ -379,6 +381,7 @@ def example_individual_functions():
     from VolAlign import (
         compute_affine_registration,
         compute_deformation_field_registration,
+        compute_chunk_alignment,
         distributed_nuclei_segmentation,
         downsample_zarr_volume,
         merge_zarr_channels,
@@ -434,10 +437,23 @@ def example_individual_functions():
         voxel_spacing=[0.2, 0.1625, 0.1625],
     )
 
+    # Example 4a: Using chunk-based alignment for non-linear deformation
+    print("4a. Computing chunk-based alignment...")
+    chunk_deformation_field = compute_chunk_alignment(
+        fixed_zarr_path="/path/to/fixed.zarr",
+        moving_zarr_path="/path/to/moving.zarr",
+        output_directory="/path/to/output",
+        output_name="chunk_alignment_result",
+        downsample_factors=(1, 3, 3),
+        interpolation_method="linear",
+        alignment_kwargs={"blob_sizes": [8, 200], "use_gpu": True},
+        voxel_spacing=[0.2, 0.1625, 0.1625],
+    )
+
     # Example 4b: Using the new split registration methods for more granular control
     print("4b. Using split registration methods...")
-    # Step 1: Initial registration (create channels + affine registration)
-    init_results = pipeline.initial_affine_registration(
+    # Step 1: Initial registration (create channels + global affine registration)
+    init_results = pipeline.initial_global_alignment(
         fixed_round_data={
             "405": "/path/to/fixed_405.zarr",
             "488": "/path/to/fixed_488.zarr",
@@ -459,8 +475,39 @@ def example_individual_functions():
         registration_name="round1_to_round2",
     )
 
+    # Step 2b: Alternative - Using chunk-based alignment for non-linear deformation
+    print("4c. Using chunk-based alignment for non-linear deformation...")
+    # Step 1: Initial chunk alignment (downsampling + distributed processing + upsampling)
+    chunk_results = pipeline.initial_chunk_alignment(
+        fixed_round_data={
+            "405": "/path/to/fixed_405.zarr",
+            "488": "/path/to/fixed_488.zarr",
+        },
+        moving_round_data={
+            "405": "/path/to/moving_405.zarr",
+            "488": "/path/to/moving_488.zarr",
+        },
+        registration_output_dir="/path/to/registration_output",
+        registration_name="round1_to_round2",
+        downsample_factors=(1, 3, 3),
+        interpolation_method="linear",
+        alignment_kwargs={"blob_sizes": [8, 200], "use_gpu": True},
+    )
+
+    # Step 2: Final deformation registration with chunk alignment results
+    final_chunk_results = pipeline.final_deformation_registration(
+        fixed_registration_channel=chunk_results["fixed_registration_channel"],
+        moving_registration_channel=chunk_results["moving_registration_channel"],
+        affine_matrix_path=chunk_results["identity_matrix"],  # Identity matrix for chunk alignment
+        registration_output_dir="/path/to/registration_output",
+        registration_name="round1_to_round2",
+        use_chunk_alignment=True,
+        initial_deformation_field_path=chunk_results["initial_deformation_field"],
+    )
+
     # Note: The original run_registration_workflow() method still works and internally
-    # calls initial_affine_registration() and final_deformation_registration() for backward compatibility
+    # calls initial_global_alignment() and final_deformation_registration() for backward compatibility
+    # For non-linear deformation, use initial_chunk_alignment() + final_deformation_registration()
 
     # Example 5: Distributed nuclei segmentation
     print("5. Running distributed nuclei segmentation...")

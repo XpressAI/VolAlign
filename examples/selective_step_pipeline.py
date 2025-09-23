@@ -41,7 +41,7 @@ from VolAlign import (
 class SelectiveStepPipeline:
     """Pipeline wrapper that allows selective step execution."""
 
-    def __init__(self, config_file=None, debug=False):
+    def __init__(self, config_file=None, debug=False, use_chunk_alignment=False):
         """Initialize the pipeline with configuration."""
         if config_file is None:
             config_file = Path(__file__).parent.parent / "config_template.yaml"
@@ -52,6 +52,7 @@ class SelectiveStepPipeline:
         self.reference_round_zarr = None
         self._status_update_lock = threading.Lock()
         self.debug = debug
+        self.use_chunk_alignment = use_chunk_alignment
 
         self._initialize_pipeline()
 
@@ -202,7 +203,8 @@ class SelectiveStepPipeline:
             "process_rounds": "Process all rounds from config (TIFF to Zarr conversion)",
             "segmentation": "Run nuclei segmentation on reference round",
             "registration": "Run registration workflow for a specific round (requires --round)",
-            "initial_affine_registration": "Run initial affine registration (create channels + affine) for a specific round (requires --round)",
+            "initial_global_alignment": "Run initial global alignment (create channels + global affine) for a specific round (requires --round)",
+            "initial_chunk_alignment": "Run initial chunk-based alignment for non-linear deformation (requires --round)",
             "final_deformation_registration": "Run final deformation registration (deformation field) for a specific round (requires --round)",
             "alignment": "Apply registration to align channels for a specific round (requires --round)",
             "all": "Run all steps sequentially",
@@ -216,9 +218,11 @@ class SelectiveStepPipeline:
 
         print(f"\n Reference round: {self.pipeline.reference_round}")
         print(f" Available rounds: {list(self.pipeline.rounds_data.keys())}")
-        print(f"\n Note: 'initial_affine_registration' and 'final_deformation_registration' are split methods")
-        print(f"       that allow more granular control over the registration process.")
-        print(f"       The original 'registration' step still works and calls both internally.")
+        print(f"\n Note: 'initial_global_alignment' and 'initial_chunk_alignment' are alternative")
+        print(f"       initial registration methods. Use 'initial_global_alignment' for linear deformation")
+        print(f"       and 'initial_chunk_alignment' for non-linear deformation.")
+        print(f"       'final_deformation_registration' can follow either initial method.")
+        print(f"       The original 'registration' step still works and calls initial_global_alignment + final internally.")
 
         return steps
 
@@ -597,11 +601,11 @@ class SelectiveStepPipeline:
             substep_id, substep_config, "registration_workflows", execute_registration
         )
 
-    def step_initial_affine_registration(self, target_round):
-        """Step 3a: Run initial affine registration (create channels + affine) for a specific round."""
-        print(f"\n=== Step 3a: Initial Affine Registration for {target_round} ===")
+    def step_initial_global_alignment(self, target_round):
+        """Step 3a: Run initial global alignment (create channels + global affine) for a specific round."""
+        print(f"\n=== Step 3a: Initial Global Alignment for {target_round} ===")
         print(
-            f"Running initial affine registration (create channels + affine) for {target_round} to reference round {self.pipeline.reference_round}"
+            f"Running initial global alignment (create channels + global affine) for {target_round} to reference round {self.pipeline.reference_round}"
         )
 
         # Ensure rounds are processed first
@@ -620,7 +624,7 @@ class SelectiveStepPipeline:
 
         try:
             target_round_zarr = self.processed_rounds[target_round]
-            init_results = self.pipeline.initial_affine_registration(
+            init_results = self.pipeline.initial_global_alignment(
                 fixed_round_data=self.reference_round_zarr,
                 moving_round_data=target_round_zarr,
                 registration_output_dir=str(
@@ -640,12 +644,73 @@ class SelectiveStepPipeline:
             print(f"✗ Error running initial registration for {target_round}: {e}")
             raise
 
-    def step_final_deformation_registration(self, target_round):
-        """Step 3b: Run final deformation registration (deformation field) for a specific round."""
-        print(f"\n=== Step 3b: Final Deformation Registration for {target_round} ===")
+    def step_initial_chunk_alignment(self, target_round):
+        """Step 3a-alt: Run initial chunk-based alignment for non-linear deformation."""
+        print(f"\n=== Step 3a-alt: Initial Chunk-Based Alignment for {target_round} ===")
         print(
-            f"Running final deformation registration (deformation field) for {target_round} to reference round {self.pipeline.reference_round}"
+            f"Running chunk-based alignment for non-linear deformation: {target_round} to reference round {self.pipeline.reference_round}"
         )
+
+        # Ensure rounds are processed first
+        if self.processed_rounds is None:
+            print("⚠️ Rounds not processed yet. Running process_rounds first...")
+            self.step_process_rounds()
+
+        if target_round == self.pipeline.reference_round:
+            print(f"⏭️ Skipping chunk alignment for reference round {target_round}")
+            return None
+
+        if target_round not in self.processed_rounds:
+            raise ValueError(
+                f"Round {target_round} not found in processed rounds: {list(self.processed_rounds.keys())}"
+            )
+
+        try:
+            target_round_zarr = self.processed_rounds[target_round]
+            
+            # Get chunk alignment parameters from config if available
+            chunk_config = self.pipeline.chunk_alignment_config
+            downsample_factors = tuple(chunk_config.get('downsample_factors', [1, 3, 3]))
+            interpolation_method = chunk_config.get('interpolation_method', 'linear')
+            alignment_kwargs = chunk_config.get('alignment_kwargs', {"blob_sizes": [8, 200], "use_gpu": True})
+            
+            chunk_results = self.pipeline.initial_chunk_alignment(
+                fixed_round_data=self.reference_round_zarr,
+                moving_round_data=target_round_zarr,
+                registration_output_dir=str(
+                    self.pipeline.working_directory
+                    / "registration"
+                    / f"{self.pipeline.reference_round}_to_{target_round}"
+                ),
+                registration_name=f"{self.pipeline.reference_round}_to_{target_round}",
+                downsample_factors=downsample_factors,
+                interpolation_method=interpolation_method,
+                alignment_kwargs=alignment_kwargs,
+            )
+
+            print(f"✓ Chunk-based alignment completed for {target_round}!")
+            print(f"✓ Chunk alignment results: {self._summarize_result(chunk_results, 'chunk alignment')}")
+
+            return chunk_results
+
+        except Exception as e:
+            print(f"✗ Error running chunk alignment for {target_round}: {e}")
+            raise
+
+    def step_final_deformation_registration(self, target_round, use_chunk_alignment=None):
+        """Step 3b: Run final deformation registration (deformation field) for a specific round."""
+        if use_chunk_alignment is None:
+            use_chunk_alignment = self.use_chunk_alignment
+            
+        if use_chunk_alignment:
+            print(f"\n=== Step 3b: Final Deformation Registration for {target_round} (Chunk Alignment Mode) ===")
+            print(f"Note: When using chunk-based alignment, the initial deformation field is already computed.")
+            print(f"Checking for chunk alignment results for {target_round}...")
+        else:
+            print(f"\n=== Step 3b: Final Deformation Registration for {target_round} ===")
+            print(
+                f"Running final deformation registration (deformation field) for {target_round} to reference round {self.pipeline.reference_round}"
+            )
 
         # Ensure rounds are processed first
         if self.processed_rounds is None:
@@ -662,7 +727,6 @@ class SelectiveStepPipeline:
             )
 
         try:
-            # Check if initial registration results exist
             registration_dir = (
                 self.pipeline.working_directory
                 / "registration"
@@ -670,30 +734,63 @@ class SelectiveStepPipeline:
             )
             registration_name = f"{self.pipeline.reference_round}_to_{target_round}"
             
-            fixed_reg_channel = registration_dir / f"{registration_name}_fixed_registration.zarr"
-            moving_reg_channel = registration_dir / f"{registration_name}_moving_registration.zarr"
-            affine_matrix_path = registration_dir / f"{registration_name}_affine_matrix.txt"
+            if use_chunk_alignment:
+                # Check for chunk alignment initial deformation field
+                initial_deformation_field = registration_dir / f"{registration_name}_initial_deformation_field.zarr"
+                
+                if not initial_deformation_field.exists():
+                    print(f"⚠️ Chunk alignment initial deformation field not found for {target_round}. Running chunk alignment first...")
+                    init_results = self.step_initial_chunk_alignment(target_round)
+                    if not init_results:
+                        raise RuntimeError(f"Failed to generate initial deformation field for {target_round}")
+                
+                # Get the registration channels and identity matrix from initial chunk alignment
+                fixed_reg_channel = registration_dir / f"{registration_name}_fixed_registration.zarr"
+                moving_reg_channel = registration_dir / f"{registration_name}_moving_registration.zarr"
+                identity_matrix_path = registration_dir / f"{registration_name}_chunk_identity_matrix.txt"
+                
+                if not all([fixed_reg_channel.exists(), moving_reg_channel.exists(), identity_matrix_path.exists()]):
+                    print(f"⚠️ Registration channels not found for {target_round}. Running chunk alignment first...")
+                    init_results = self.step_initial_chunk_alignment(target_round)
+                    if not init_results:
+                        raise RuntimeError(f"Failed to generate registration channels for {target_round}")
+                
+                # Run final deformation registration with chunk alignment mode
+                final_results = self.pipeline.final_deformation_registration(
+                    fixed_registration_channel=str(fixed_reg_channel),
+                    moving_registration_channel=str(moving_reg_channel),
+                    affine_matrix_path=str(identity_matrix_path),
+                    registration_output_dir=str(registration_dir),
+                    registration_name=registration_name,
+                    use_chunk_alignment=True,
+                    initial_deformation_field_path=str(initial_deformation_field),
+                )
+            else:
+                # Traditional affine registration path
+                fixed_reg_channel = registration_dir / f"{registration_name}_fixed_registration.zarr"
+                moving_reg_channel = registration_dir / f"{registration_name}_moving_registration.zarr"
+                affine_matrix_path = registration_dir / f"{registration_name}_affine_matrix.txt"
 
-            if not all([fixed_reg_channel.exists(), moving_reg_channel.exists(), affine_matrix_path.exists()]):
-                print(f"⚠️ Initial registration not found for {target_round}. Running initial registration first...")
-                init_results = self.step_initial_affine_registration(target_round)
-                if init_results:
-                    fixed_reg_channel = init_results["fixed_registration_channel"]
-                    moving_reg_channel = init_results["moving_registration_channel"]
-                    affine_matrix_path = init_results["affine_matrix"]
+                if not all([fixed_reg_channel.exists(), moving_reg_channel.exists(), affine_matrix_path.exists()]):
+                    print(f"⚠️ Initial global alignment not found for {target_round}. Running initial registration first...")
+                    init_results = self.step_initial_global_alignment(target_round)
+                    if init_results:
+                        fixed_reg_channel = init_results["fixed_registration_channel"]
+                        moving_reg_channel = init_results["moving_registration_channel"]
+                        affine_matrix_path = init_results["affine_matrix"]
 
-            final_results = self.pipeline.final_deformation_registration(
-                fixed_registration_channel=str(fixed_reg_channel),
-                moving_registration_channel=str(moving_reg_channel),
-                affine_matrix_path=str(affine_matrix_path),
-                registration_output_dir=str(registration_dir),
-                registration_name=registration_name,
-            )
+                final_results = self.pipeline.final_deformation_registration(
+                    fixed_registration_channel=str(fixed_reg_channel),
+                    moving_registration_channel=str(moving_reg_channel),
+                    affine_matrix_path=str(affine_matrix_path),
+                    registration_output_dir=str(registration_dir),
+                    registration_name=registration_name,
+                )
 
-            print(f"✓ Final registration completed for {target_round}!")
-            print(f"✓ Final registration results: {self._summarize_result(final_results, 'final registration')}")
+                print(f"✓ Final registration completed for {target_round}!")
+                print(f"✓ Final registration results: {self._summarize_result(final_results, 'final registration')}")
 
-            return final_results
+                return final_results
 
         except Exception as e:
             print(f"✗ Error running final registration for {target_round}: {e}")
@@ -867,7 +964,12 @@ class SelectiveStepPipeline:
                     continue
 
                 print(f"\n--- Processing {round_name} ---")
-                self.step_registration(round_name)
+                if self.use_chunk_alignment:
+                    print(f"Using chunk-based alignment for {round_name}")
+                    self.step_initial_chunk_alignment(round_name)
+                    self.step_final_deformation_registration(round_name, use_chunk_alignment=True)
+                else:
+                    self.step_registration(round_name)
                 self.step_alignment(round_name)
 
             print("\n✓ All pipeline steps completed successfully!")
@@ -1036,12 +1138,15 @@ Examples:
   %(prog)s --step process_rounds                           # Process all rounds
   %(prog)s --step segmentation                             # Run segmentation
   %(prog)s --step registration --round round2              # Register round2
-  %(prog)s --step initial_affine_registration --round round2      # Run initial affine registration for round2
+  %(prog)s --step initial_global_alignment --round round2         # Run initial global alignment for round2
+  %(prog)s --step initial_chunk_alignment --round round2          # Run chunk-based alignment for round2
   %(prog)s --step final_deformation_registration --round round2   # Run final deformation registration for round2
+  %(prog)s --step final_deformation_registration --round round2 --use-chunk-alignment  # Use chunk alignment results for final step
   %(prog)s --step registration --round all                 # Register all non-reference rounds
   %(prog)s --step alignment --round round2                 # Align round2 channels
   %(prog)s --step alignment --round all                    # Align all non-reference rounds
   %(prog)s --step all                                      # Run complete pipeline
+  %(prog)s --step all --use-chunk-alignment                # Run complete pipeline with chunk-based alignment
   %(prog)s --step progress                                 # Show progress
   %(prog)s --step resume                                   # Resume interrupted pipeline
   %(prog)s --reset-step data_preparation                   # Reset step to pending
@@ -1054,7 +1159,8 @@ Examples:
             "process_rounds",
             "segmentation",
             "registration",
-            "initial_affine_registration",
+            "initial_global_alignment",
+            "initial_chunk_alignment",
             "final_deformation_registration",
             "alignment",
             "all",
@@ -1086,6 +1192,11 @@ Examples:
         "--reset-step", help="Reset a specific step to pending status"
     )
 
+    parser.add_argument(
+        "--use-chunk-alignment", action="store_true",
+        help="Use chunk-based alignment instead of traditional global alignment"
+    )
+
     args = parser.parse_args()
 
     # Show help if no arguments provided
@@ -1100,7 +1211,7 @@ Examples:
 
     try:
         # Initialize pipeline with debug flag
-        pipeline = SelectiveStepPipeline(config_file=args.config, debug=args.debug)
+        pipeline = SelectiveStepPipeline(config_file=args.config, debug=args.debug, use_chunk_alignment=args.use_chunk_alignment)
 
         # Handle reset step if requested
         if args.reset_step:
@@ -1119,12 +1230,12 @@ Examples:
             return
 
         # Validate round argument for steps that need it
-        if args.step in ["registration", "initial_affine_registration", "final_deformation_registration", "alignment"] and not args.round:
+        if args.step in ["registration", "initial_global_alignment", "initial_chunk_alignment", "final_deformation_registration", "alignment"] and not args.round:
             print(f"✗ Error: --round argument is required for {args.step} step")
             return
 
         # Handle --round all convenience for registration and alignment
-        if args.step in ["registration", "initial_affine_registration", "final_deformation_registration", "alignment"] and args.round == "all":
+        if args.step in ["registration", "initial_global_alignment", "initial_chunk_alignment", "final_deformation_registration", "alignment"] and args.round == "all":
             print(f"Executing {args.step} for all non-reference rounds...")
             
             # Ensure rounds are processed first
@@ -1138,10 +1249,12 @@ Examples:
                     print(f"\n--- {args.step.title()} for {round_name} ---")
                     if args.step == "registration":
                         pipeline.step_registration(round_name)
-                    elif args.step == "initial_affine_registration":
-                        pipeline.step_initial_affine_registration(round_name)
+                    elif args.step == "initial_global_alignment":
+                        pipeline.step_initial_global_alignment(round_name)
+                    elif args.step == "initial_chunk_alignment":
+                        pipeline.step_initial_chunk_alignment(round_name)
                     elif args.step == "final_deformation_registration":
-                        pipeline.step_final_deformation_registration(round_name)
+                        pipeline.step_final_deformation_registration(round_name, use_chunk_alignment=args.use_chunk_alignment)
                     else:  # alignment
                         pipeline.step_alignment(round_name)
                     processed_any = True
@@ -1164,11 +1277,14 @@ Examples:
         elif args.step == "registration":
             pipeline.step_registration(args.round)
 
-        elif args.step == "initial_affine_registration":
-            pipeline.step_initial_affine_registration(args.round)
+        elif args.step == "initial_global_alignment":
+            pipeline.step_initial_global_alignment(args.round)
+
+        elif args.step == "initial_chunk_alignment":
+            pipeline.step_initial_chunk_alignment(args.round)
 
         elif args.step == "final_deformation_registration":
-            pipeline.step_final_deformation_registration(args.round)
+            pipeline.step_final_deformation_registration(args.round, use_chunk_alignment=args.use_chunk_alignment)
 
         elif args.step == "alignment":
             pipeline.step_alignment(args.round)
