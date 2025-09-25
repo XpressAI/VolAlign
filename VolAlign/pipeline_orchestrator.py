@@ -642,12 +642,27 @@ class MicroscopyProcessingPipeline:
 
             # Step 4: Apply registration to all channels
             print(f"Applying registration to all channels for {round_name}...")
+            
+            # Check if this was chunk alignment by looking for the registration method
+            use_chunk_alignment = registration_results.get("registration_method") == "chunk_alignment"
+            initial_deformation_field_path = None
+            
+            if use_chunk_alignment:
+                # For chunk alignment, get the initial deformation field and final deformation field
+                initial_deformation_field_path = registration_results["initial_deformation_field"]
+                # Look for the final deformation field
+                final_deformation_field_path = str(self.working_directory / "registration" / f"{self.reference_round}_to_{round_name}" / f"{self.reference_round}_to_{round_name}_deformation_field.zarr")
+            else:
+                final_deformation_field_path = registration_results["deformation_field"]
+            
             aligned_channels = self.apply_registration_to_all_channels(
                 reference_round_data=reference_round_zarr,
                 target_round_data=round_zarr,
                 affine_matrix_path=registration_results["affine_matrix"],
-                deformation_field_path=registration_results["deformation_field"],
+                deformation_field_path=final_deformation_field_path,
                 output_directory=str(self.working_directory / "aligned" / round_name),
+                use_chunk_alignment=use_chunk_alignment,
+                initial_deformation_field_path=initial_deformation_field_path,
             )
             results["aligned_channels"][round_name] = aligned_channels
 
@@ -968,10 +983,8 @@ class MicroscopyProcessingPipeline:
         distributed_registration_results = {
             "fixed_registration_channel": str(fixed_reg_channel),
             "moving_registration_channel": str(moving_reg_channel),
-            "deformation_field": initial_deformation_field_path,
-            "affine_matrix": str(
-                affine_matrix_path
-            ),  # Identity matrix for compatibility
+            "initial_deformation_field": initial_deformation_field_path,
+            "identity_matrix": str(affine_matrix_path),  # Identity matrix for chunk alignment
             "registration_method": "chunk_alignment",
         }
 
@@ -1207,6 +1220,8 @@ class MicroscopyProcessingPipeline:
         affine_matrix_path: str,
         deformation_field_path: str,
         output_directory: str,
+        use_chunk_alignment: bool = False,
+        initial_deformation_field_path: Optional[str] = None,
     ) -> Dict[str, str]:
         """
         Apply computed registration to all imaging channels.
@@ -1217,6 +1232,9 @@ class MicroscopyProcessingPipeline:
             affine_matrix_path (str): Path to computed affine transformation matrix
             deformation_field_path (str): Path to computed deformation field
             output_directory (str): Directory for aligned channel outputs
+            use_chunk_alignment (bool): Whether to use chunk-based alignment mode
+            initial_deformation_field_path (Optional[str]): Path to initial deformation field
+                                                           (required when use_chunk_alignment=True)
 
         Returns:
             Dict[str, str]: Dictionary mapping channel names to aligned paths
@@ -1224,7 +1242,10 @@ class MicroscopyProcessingPipeline:
         output_dir = Path(output_directory)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        print("Applying registration to all imaging channels...")
+        if use_chunk_alignment:
+            print("Applying chunk-based registration to all imaging channels...")
+        else:
+            print("Applying global registration to all imaging channels...")
 
         # Get all target channels (excluding registration channels if they exist)
         target_channels = [
@@ -1245,6 +1266,8 @@ class MicroscopyProcessingPipeline:
             voxel_spacing=self.voxel_spacing,
             block_size=self.block_size,
             cluster_config=self.cluster_config,
+            use_chunk_alignment=use_chunk_alignment,
+            initial_deformation_field_path=initial_deformation_field_path,
         )
 
         # Create mapping from channel names to aligned paths

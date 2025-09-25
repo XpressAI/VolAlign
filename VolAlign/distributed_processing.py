@@ -374,14 +374,22 @@ def apply_deformation_to_channels(
     voxel_spacing: List[float],
     block_size: List[int] = [512, 512, 512],
     cluster_config: Optional[Dict] = None,
+    use_chunk_alignment: bool = False,
+    initial_deformation_field_path: Optional[str] = None,
 ) -> List[str]:
     """
-    Apply computed affine matrix and deformation field to multiple imaging channels.
+    Apply computed transformations to multiple imaging channels.
 
-    Uses both the affine transformation and deformation field computed from registration
-    channels (405nm, 488nm) to align all other imaging channels (epitope markers) for
-    consistent multi-round analysis. This applies the complete transformation pipeline
-    to raw zarr volumes.
+    When use_chunk_alignment=False (Global Alignment):
+        Uses both the affine transformation and deformation field computed from registration
+        channels (405nm, 488nm) to align all other imaging channels (epitope markers).
+        Transform list: [affine_matrix, deformation_field]
+
+    When use_chunk_alignment=True (Chunk Alignment):
+        Uses both the initial deformation field (from chunk alignment) and final deformation
+        field to align all other imaging channels. This provides the complete transformation
+        pipeline for chunk-based alignment.
+        Transform list: [initial_deformation_field, deformation_field]
 
     Args:
         reference_zarr_path (str): Path to reference volume (fixed)
@@ -392,14 +400,38 @@ def apply_deformation_to_channels(
         voxel_spacing (List[float]): Voxel spacing in [z, y, x] order
         block_size (List[int]): Block size for distributed processing
         cluster_config (Optional[Dict]): Dask cluster configuration
+        use_chunk_alignment (bool): Whether to use chunk-based alignment mode
+        initial_deformation_field_path (Optional[str]): Path to initial deformation field
+                                                       (required when use_chunk_alignment=True)
 
     Returns:
         List[str]: Paths to aligned channel volumes
     """
-    # Load reference volume, affine matrix, and deformation field
+    # Load reference volume and deformation field
     reference_volume = zarr.open(reference_zarr_path, mode="r")
-    affine_matrix = np.loadtxt(affine_matrix_path)
     deformation_field = zarr.open(deformation_field_path, mode="r")
+
+    # Load transformation matrices based on alignment mode
+    if use_chunk_alignment:
+        # Chunk alignment mode: use initial deformation field + final deformation field
+        if initial_deformation_field_path is None:
+            raise ValueError(
+                "initial_deformation_field_path is required when use_chunk_alignment=True"
+            )
+        
+        if not os.path.exists(initial_deformation_field_path):
+            raise FileNotFoundError(
+                f"Initial deformation field not found: {initial_deformation_field_path}"
+            )
+        
+        print("Using chunk alignment mode: initial_deformation_field + deformation_field")
+        initial_deformation_field = zarr.open(initial_deformation_field_path, mode="r")
+        transform_list = [initial_deformation_field, deformation_field]
+    else:
+        # Global alignment mode: use affine matrix + deformation field
+        print("Using global alignment mode: affine_matrix + deformation_field")
+        affine_matrix = np.loadtxt(affine_matrix_path)
+        transform_list = [affine_matrix, deformation_field]
 
     # Default cluster configuration
     if cluster_config is None:
@@ -443,13 +475,13 @@ def apply_deformation_to_channels(
         channel_name = os.path.basename(channel_path).replace(".zarr", "")
         output_path = os.path.join(output_directory, f"{channel_name}_aligned.zarr")
 
-        # Apply both affine matrix and deformation field transformations
+        # Apply transformations based on alignment mode
         distributed_apply_transform(
             reference_volume,
             channel_volume,
             voxel_spacing,
             voxel_spacing,
-            transform_list=[affine_matrix, deformation_field],
+            transform_list=transform_list,
             blocksize=block_size,
             write_path=output_path,
             cluster_kwargs=alignment_cluster_config.copy(),

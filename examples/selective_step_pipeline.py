@@ -855,6 +855,10 @@ class SelectiveStepPipeline:
                 # Fallback to direct processing
                 target_round_zarr = self.processed_rounds[target_round]
 
+                # Check if we should use chunk alignment mode
+                use_chunk_alignment = self.use_chunk_alignment
+                initial_deformation_field_path = None
+                
                 # Try to locate reg substep config (if present) for path hints
                 reg_steps = self._get_substeps_safely("registration_workflows")
                 reg_substep_id = f"registration_{self.pipeline.reference_round}_to_{target_round}"
@@ -862,14 +866,33 @@ class SelectiveStepPipeline:
                 deformation_field_path = self._get_deformation_field_path(target_round, reg_substep_config)
                 affine_matrix_path = self._get_affine_matrix_path(target_round, reg_substep_config)
 
-                if not deformation_field_path.exists() or not affine_matrix_path.exists():
-                    print(
-                        f"⚠️ Registration not found for {target_round}. Running registration first..."
+                if use_chunk_alignment:
+                    # For chunk alignment, look for initial deformation field and final deformation field
+                    registration_dir = (
+                        self.pipeline.working_directory
+                        / "registration"
+                        / f"{self.pipeline.reference_round}_to_{target_round}"
                     )
-                    registration_results = self.step_registration(target_round)
-                    if isinstance(registration_results, dict):
-                        deformation_field_path = registration_results.get("deformation_field", deformation_field_path)
-                        affine_matrix_path = registration_results.get("affine_matrix", affine_matrix_path)
+                    initial_deformation_field_path = str(registration_dir / f"{self.pipeline.reference_round}_to_{target_round}_initial_deformation_field.zarr")
+                    final_deformation_field_path = str(registration_dir / f"{self.pipeline.reference_round}_to_{target_round}_deformation_field.zarr")
+                    identity_matrix_path = str(registration_dir / f"{self.pipeline.reference_round}_to_{target_round}_chunk_identity_matrix.txt")
+                    
+                    # Check if chunk alignment files exist
+                    if not all([Path(initial_deformation_field_path).exists(), Path(final_deformation_field_path).exists(), Path(identity_matrix_path).exists()]):
+                        print(f"⚠️ Chunk alignment not found for {target_round}. Running chunk alignment first...")
+                        self.step_initial_chunk_alignment(target_round)
+                        self.step_final_deformation_registration(target_round, use_chunk_alignment=True)
+                    
+                    deformation_field_path = Path(final_deformation_field_path)
+                    affine_matrix_path = Path(identity_matrix_path)
+                else:
+                    # Traditional global alignment
+                    if not deformation_field_path.exists() or not affine_matrix_path.exists():
+                        print(f"⚠️ Registration not found for {target_round}. Running registration first...")
+                        registration_results = self.step_registration(target_round)
+                        if isinstance(registration_results, dict):
+                            deformation_field_path = registration_results.get("deformation_field", deformation_field_path)
+                            affine_matrix_path = registration_results.get("affine_matrix", affine_matrix_path)
 
                 aligned_channels = self.pipeline.apply_registration_to_all_channels(
                     reference_round_data=self.reference_round_zarr,
@@ -879,6 +902,8 @@ class SelectiveStepPipeline:
                     output_directory=str(
                         self.pipeline.working_directory / "aligned" / target_round
                     ),
+                    use_chunk_alignment=use_chunk_alignment,
+                    initial_deformation_field_path=initial_deformation_field_path,
                 )
 
             self._print_done(f"Channel alignment for {target_round}", aligned_channels)
@@ -907,6 +932,10 @@ class SelectiveStepPipeline:
         def execute_alignment():
             target_round_zarr = self.processed_rounds[target_round]
 
+            # Check if we should use chunk alignment mode
+            use_chunk_alignment = self.use_chunk_alignment
+            initial_deformation_field_path = None
+
             # Get registration substep config to find deformation field path
             reg_steps = self._get_substeps_safely("registration_workflows")
             reg_substep_id = f"registration_{self.pipeline.reference_round}_to_{target_round}"
@@ -916,20 +945,39 @@ class SelectiveStepPipeline:
             deformation_field_path = self._get_deformation_field_path(target_round, reg_substep_config)
             affine_matrix_path = self._get_affine_matrix_path(target_round, reg_substep_config)
 
-            if not deformation_field_path.exists() or not affine_matrix_path.exists():
-                print(
-                    f"    ⚠️ Registration not found for {target_round}. Running registration first..."
+            if use_chunk_alignment:
+                # For chunk alignment, look for initial deformation field and final deformation field
+                registration_dir = (
+                    self.pipeline.working_directory
+                    / "registration"
+                    / f"{self.pipeline.reference_round}_to_{target_round}"
                 )
-                registration_results = self.step_registration(target_round)
-                # Try to get paths from results, fallback to constructed paths
-                if isinstance(registration_results, dict):
-                    if "deformation_field" in registration_results:
-                        deformation_field_path = registration_results["deformation_field"]
-                    if "affine_matrix" in registration_results:
-                        affine_matrix_path = registration_results["affine_matrix"]
-                else:
-                    deformation_field_path = self._get_deformation_field_path(target_round, reg_substep_config)
-                    affine_matrix_path = self._get_affine_matrix_path(target_round, reg_substep_config)
+                initial_deformation_field_path = str(registration_dir / f"{self.pipeline.reference_round}_to_{target_round}_initial_deformation_field.zarr")
+                final_deformation_field_path = str(registration_dir / f"{self.pipeline.reference_round}_to_{target_round}_deformation_field.zarr")
+                identity_matrix_path = str(registration_dir / f"{self.pipeline.reference_round}_to_{target_round}_chunk_identity_matrix.txt")
+                
+                # Check if chunk alignment files exist
+                if not all([Path(initial_deformation_field_path).exists(), Path(final_deformation_field_path).exists(), Path(identity_matrix_path).exists()]):
+                    print(f"    ⚠️ Chunk alignment not found for {target_round}. Running chunk alignment first...")
+                    self.step_initial_chunk_alignment(target_round)
+                    self.step_final_deformation_registration(target_round, use_chunk_alignment=True)
+                
+                deformation_field_path = Path(final_deformation_field_path)
+                affine_matrix_path = Path(identity_matrix_path)
+            else:
+                # Traditional global alignment
+                if not deformation_field_path.exists() or not affine_matrix_path.exists():
+                    print(f"    ⚠️ Registration not found for {target_round}. Running registration first...")
+                    registration_results = self.step_registration(target_round)
+                    # Try to get paths from results, fallback to constructed paths
+                    if isinstance(registration_results, dict):
+                        if "deformation_field" in registration_results:
+                            deformation_field_path = registration_results["deformation_field"]
+                        if "affine_matrix" in registration_results:
+                            affine_matrix_path = registration_results["affine_matrix"]
+                    else:
+                        deformation_field_path = self._get_deformation_field_path(target_round, reg_substep_config)
+                        affine_matrix_path = self._get_affine_matrix_path(target_round, reg_substep_config)
 
             # Run the alignment
             return self.pipeline.apply_registration_to_all_channels(
@@ -940,6 +988,8 @@ class SelectiveStepPipeline:
                 output_directory=str(
                     self.pipeline.working_directory / "aligned" / target_round
                 ),
+                use_chunk_alignment=use_chunk_alignment,
+                initial_deformation_field_path=initial_deformation_field_path,
             )
         
         # Use common execution pattern
