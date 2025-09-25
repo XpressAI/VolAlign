@@ -116,4 +116,79 @@ segmentation_cluster_config:
   
   # Use local CUDA for GPU processing
   use_local_cuda: true
+
+# Epitope Analysis Configuration
+epitope_analysis:
+  # Whether to enable epitope analysis as part of the pipeline
+  enabled: true
+  
+  # Shell region parameters for epitope analysis
+  shell_parameters:
+    # Number of erosion iterations to create inner boundary
+    erosion_iterations: 2
+    
+    # Number of dilation iterations to create outer boundary
+    dilation_iterations: 6
+    
+    # Size of morphological footprint (3D ball radius or 2D square size)
+    footprint_size: 3
+    
+    # Whether to use 3D morphology (true) or 2D slice-by-slice (false)
+    use_3d_morphology: true
+  
+  # Epitope channels configuration
+  # Define which channels contain epitope markers (exclude registration channels like 405, 488)
+  epitope_channels:
+    # List of channel names that contain epitope markers
+    # These should match the channel names in data.rounds
+    channels: ["channel3", "channel4"]
+    
+    # Optional: Map channel names to epitope tags for better identification
+    channel_tags:
+      "channel3": "CD45"
+      "channel4": "CD68"
+      # Add more mappings as needed
+  
+  # Analysis parameters
+  analysis_parameters:
+    # Maximum number of nuclei to process per round (null for all nuclei)
+    max_nuclei_per_round: null
+    
+    # Memory limit for processing chunks (in GB)
+    memory_limit_gb: 8.0
+    
+    # Number of Z-slices to process at once
+    chunk_size: 50
+    
+    # Default analysis region: "nuclei", "shell", or "combined"
+    default_region: "combined"
+  
+  # Statistical analysis configuration
+  statistical_analysis:
+    # Default cutoff determination method: "otsu", "gmm", "percentile", "std", or "all"
+    default_cutoff_method: "otsu"
+    
+    # Percentile value for percentile-based cutoffs (0-100)
+    percentile_cutoff: 75
+    
+    # Random seed for reproducible results
+    random_state: 42
+    
+    # Minimum number of samples required for bimodal detection
+    min_samples_bimodal: 10
+  
+  # Output configuration
+  output:
+    # Base directory for epitope analysis results (relative to working_directory)
+    output_subdir: "epitope_analysis"
+    
+    # File formats to save results in
+    save_formats: ["json"]  # Options: "json", "csv", "hdf5"
+    
+    # Whether to save detailed statistics for each nucleus
+    save_detailed_stats: true
+    
+    # Whether to save distribution analysis plots (requires matplotlib)
+    save_plots: false
+
   

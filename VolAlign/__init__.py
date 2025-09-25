@@ -10,3 +10,16 @@ from .step_tracker import (
     save_extended_config,
 )
 from .utils import *
+
+# Epitope analysis components
+from .epitope_analysis import (
+    EpitopeAnalyzer,
+    EpitopeIntensityExtractor,
+    EpitopeStatisticalAnalyzer,
+    CutoffDetermination,
+    EpitopeChannel,
+    ShellParameters,
+    NucleusEpitopeData,
+    EpitopeAnalysisResult,
+    DistributionAnalysis,
+)
