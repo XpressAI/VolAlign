@@ -418,13 +418,15 @@ def apply_deformation_to_channels(
             raise ValueError(
                 "initial_deformation_field_path is required when use_chunk_alignment=True"
             )
-        
+
         if not os.path.exists(initial_deformation_field_path):
             raise FileNotFoundError(
                 f"Initial deformation field not found: {initial_deformation_field_path}"
             )
-        
-        print("Using chunk alignment mode: initial_deformation_field + deformation_field")
+
+        print(
+            "Using chunk alignment mode: initial_deformation_field + deformation_field"
+        )
         initial_deformation_field = zarr.open(initial_deformation_field_path, mode="r")
         transform_list = [initial_deformation_field, deformation_field]
     else:
@@ -818,8 +820,10 @@ def compute_chunk_alignment(
 
     # Set n_workers to 1 if GPU is enabled in alignment_kwargs
     if alignment_kwargs and alignment_kwargs.get("use_gpu", False):
-        print("GPU enabled in alignment_kwargs - setting n_workers to 1 for optimal GPU utilization")
-        cluster_config["n_workers"] = 1 # run of one GPU if use_gpu is True
+        print(
+            "GPU enabled in alignment_kwargs - setting n_workers to 1 for optimal GPU utilization"
+        )
+        cluster_config["n_workers"] = 1  # run of one GPU if use_gpu is True
 
     # Configure alignment steps
     alignment_steps = [("ransac", alignment_kwargs)]

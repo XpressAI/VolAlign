@@ -642,19 +642,28 @@ class MicroscopyProcessingPipeline:
 
             # Step 4: Apply registration to all channels
             print(f"Applying registration to all channels for {round_name}...")
-            
+
             # Check if this was chunk alignment by looking for the registration method
-            use_chunk_alignment = registration_results.get("registration_method") == "chunk_alignment"
+            use_chunk_alignment = (
+                registration_results.get("registration_method") == "chunk_alignment"
+            )
             initial_deformation_field_path = None
-            
+
             if use_chunk_alignment:
                 # For chunk alignment, get the initial deformation field and final deformation field
-                initial_deformation_field_path = registration_results["initial_deformation_field"]
+                initial_deformation_field_path = registration_results[
+                    "initial_deformation_field"
+                ]
                 # Look for the final deformation field
-                final_deformation_field_path = str(self.working_directory / "registration" / f"{self.reference_round}_to_{round_name}" / f"{self.reference_round}_to_{round_name}_deformation_field.zarr")
+                final_deformation_field_path = str(
+                    self.working_directory
+                    / "registration"
+                    / f"{self.reference_round}_to_{round_name}"
+                    / f"{self.reference_round}_to_{round_name}_deformation_field.zarr"
+                )
             else:
                 final_deformation_field_path = registration_results["deformation_field"]
-            
+
             aligned_channels = self.apply_registration_to_all_channels(
                 reference_round_data=reference_round_zarr,
                 target_round_data=round_zarr,
@@ -961,7 +970,9 @@ class MicroscopyProcessingPipeline:
             alignment_kwargs = {"blob_sizes": [2 * 4, 100 * 2], "use_gpu": True}
 
         # Get chunk alignment specific block size, fallback to global block size
-        chunk_block_size = self.chunk_alignment_config.get("block_size", self.block_size)
+        chunk_block_size = self.chunk_alignment_config.get(
+            "block_size", self.block_size
+        )
 
         # Step 3: Compute chunk-based alignment (initial deformation field only)
         print("Computing chunk-based initial deformation field...")
@@ -987,7 +998,9 @@ class MicroscopyProcessingPipeline:
             "fixed_registration_channel": str(fixed_reg_channel),
             "moving_registration_channel": str(moving_reg_channel),
             "initial_deformation_field": initial_deformation_field_path,
-            "identity_matrix": str(affine_matrix_path),  # Identity matrix for chunk alignment
+            "identity_matrix": str(
+                affine_matrix_path
+            ),  # Identity matrix for chunk alignment
             "registration_method": "chunk_alignment",
         }
 
