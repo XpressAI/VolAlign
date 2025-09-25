@@ -1202,6 +1202,7 @@ class MicroscopyProcessingPipeline:
                 input_zarr_path=str(segmentation_output),
                 output_zarr_path=str(upsampled_path),
                 upsample_factors=self.segmentation_downsample_factors,
+                target_shape=zarr.open(input_channel, mode="r").shape,
             )
 
             final_segmentation_path = str(upsampled_path)
