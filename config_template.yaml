@@ -67,6 +67,32 @@ registration:
   # Channels to use for registration (typically DAPI channels)
   # First channel is used as reference for alignment
   channels: ["405", "488"]
+  
+  # Chunk alignment configuration for handling non-linear deformation
+  # Use initial_chunk_alignment instead of initial_global_alignment
+  # when your data has significant non-linear deformation
+  chunk_alignment:
+    # Downsampling factors for efficient processing [z, y, x]
+    # Higher values = faster processing but lower resolution
+    downsample_factors: [1, 3, 3]
+    
+    # Interpolation method for deformation field upsampling
+    # Options: "linear", "bspline", "cubic"
+    interpolation_method: "linear"
+    
+    # Block size for distributed processing [z, y, x]
+    # Should match or be smaller than main block_size
+    block_size: [512, 512, 512]
+    
+    # Overlap fraction for distributed processing
+    overlap: 0.3
+    
+    # Alignment parameters for chunk-based processing
+    alignment_kwargs:
+      # Blob sizes for feature detection [min_size, max_size]
+      blob_sizes: [8, 200]
+      # Use GPU acceleration if available
+      use_gpu: true
 
 # Segmentation configuration
 segmentation:
