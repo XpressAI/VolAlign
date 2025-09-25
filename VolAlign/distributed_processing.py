@@ -816,6 +816,11 @@ def compute_chunk_alignment(
             },
         }
 
+    # Set n_workers to 1 if GPU is enabled in alignment_kwargs
+    if alignment_kwargs and alignment_kwargs.get("use_gpu", False):
+        print("GPU enabled in alignment_kwargs - setting n_workers to 1 for optimal GPU utilization")
+        cluster_config["n_workers"] = 1 # run of one GPU if use_gpu is True
+
     # Configure alignment steps
     alignment_steps = [("ransac", alignment_kwargs)]
 

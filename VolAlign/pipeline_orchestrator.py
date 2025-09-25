@@ -960,6 +960,9 @@ class MicroscopyProcessingPipeline:
         if alignment_kwargs is None:
             alignment_kwargs = {"blob_sizes": [2 * 4, 100 * 2], "use_gpu": True}
 
+        # Get chunk alignment specific block size, fallback to global block size
+        chunk_block_size = self.chunk_alignment_config.get("block_size", self.block_size)
+
         # Step 3: Compute chunk-based alignment (initial deformation field only)
         print("Computing chunk-based initial deformation field...")
         initial_deformation_field_path = compute_chunk_alignment(
@@ -970,7 +973,7 @@ class MicroscopyProcessingPipeline:
             voxel_spacing=self.voxel_spacing,
             downsample_factors=downsample_factors,
             interpolation_method=interpolation_method,
-            block_size=self.block_size,
+            block_size=chunk_block_size,
             alignment_kwargs=alignment_kwargs,
             cluster_config=self.cluster_config,
         )
