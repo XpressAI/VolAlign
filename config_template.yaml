@@ -37,27 +37,27 @@ data:
     round1:
       "405": "/path/to/round1_405nm.tif"
       "488": "/path/to/round1_488nm.tif"
-      "channel3": "/path/to/round1_channel3.tif"
-      "channel4": "/path/to/round1_channel4.tif"
+      "546": "/path/to/round1_546nm.tif"
+      "647": "/path/to/round1_647nm.tif"
     
     round2:
       "405": "/path/to/round2_405nm.tif"
       "488": "/path/to/round2_488nm.tif"
-      "channel3": "/path/to/round2_channel3.tif"
-      "channel4": "/path/to/round2_channel4.tif"
+      "546": "/path/to/round2_546nm.tif"
+      "647": "/path/to/round2_647nm.tif"
     
     round3:
       "405": "/path/to/round3_405nm.tif"
       "488": "/path/to/round3_488nm.tif"
-      "channel3": "/path/to/round3_channel3.tif"
-      "channel4": "/path/to/round3_channel4.tif"
+      "546": "/path/to/round3_546nm.tif"
+      "647": "/path/to/round3_647nm.tif"
     
     # Add more rounds as needed...
     # round4:
     #   "405": "/path/to/round4_405nm.tif"
     #   "488": "/path/to/round4_488nm.tif"
-    #   "channel3": "/path/to/round4_channel3.tif"
-    #   "channel4": "/path/to/round4_channel4.tif"
+    #   "546": "/path/to/round4_546nm.tif"
+    #   "647": "/path/to/round4_647nm.tif"
 
 # Registration configuration
 registration:
@@ -65,8 +65,8 @@ registration:
   merge_strategy: "mean"
   
   # Channels to use for registration (typically DAPI channels)
-  # First channel is used as reference for alignment
-  channels: ["405", "488"]
+  # First channel is used as reference for alignment, you can use up to two reference channels
+  channels: ["405"]
   
   # Chunk alignment configuration for handling non-linear deformation
   # Use initial_chunk_alignment instead of initial_global_alignment
@@ -117,7 +117,7 @@ cluster_config:
   threads_per_worker: 1
   
   # Memory limit per worker (e.g., "150GB", "32GB")
-  memory_limit: "150GB"
+  memory_limit: "180GB"
   
   # Additional cluster configuration options
   config:
@@ -160,61 +160,45 @@ epitope_analysis:
     footprint_size: 3
     
     # Whether to use 3D morphology (true) or 2D slice-by-slice (false)
-    use_3d_morphology: true
+    use_3d_morphology: false
   
   # Epitope channels configuration
-  # Define which channels contain epitope markers (exclude registration channels like 405, 488)
+  # Define which channels contain epitope markers across all rounds
   epitope_channels:
     # List of channel names that contain epitope markers
-    # These should match the channel names in data.rounds
-    channels: ["channel3", "channel4"]
+    channels: ["488", "546", "647"]
     
-    # Optional: Map channel names to epitope tags for better identification
+    # Optional tags for each channel (for better identification)
     channel_tags:
-      "channel3": "CD45"
-      "channel4": "CD68"
-      # Add more mappings as needed
+      "488": "Epitope_488nm"
+      "546": "Epitope_546nm"
+      "647": "Epitope_647nm"
   
   # Analysis parameters
   analysis_parameters:
-    # Maximum number of nuclei to process per round (null for all nuclei)
+    # Set to null to analyze ALL nuclei (no limit)
     max_nuclei_per_round: null
     
-    # Memory limit for processing chunks (in GB)
-    memory_limit_gb: 8.0
-    
-    # Number of Z-slices to process at once
-    chunk_size: 50
-    
-    # Default analysis region: "nuclei", "shell", or "combined"
+    # Default region for analysis: "nuclei", "shell", or "combined"
     default_region: "combined"
   
   # Statistical analysis configuration
   statistical_analysis:
-    # Default cutoff determination method: "otsu", "gmm", "percentile", "std", or "all"
-    default_cutoff_method: "otsu"
-    
-    # Percentile value for percentile-based cutoffs (0-100)
-    percentile_cutoff: 75
+    # Cutoff method: "otsu", "percentile", "gmm"
+    cutoff_method: "otsu"
     
     # Random seed for reproducible results
     random_state: 42
-    
-    # Minimum number of samples required for bimodal detection
-    min_samples_bimodal: 10
   
   # Output configuration
   output:
-    # Base directory for epitope analysis results (relative to working_directory)
+    # Subdirectory name for epitope analysis results
     output_subdir: "epitope_analysis"
     
-    # File formats to save results in
-    save_formats: ["json"]  # Options: "json", "csv", "hdf5"
+    # Output formats: ["json", "csv", "hdf5"]
+    save_formats: ["json", "csv"]
     
-    # Whether to save detailed statistics for each nucleus
+    # Whether to save detailed statistical distributions
     save_detailed_stats: true
-    
-    # Whether to save distribution analysis plots (requires matplotlib)
-    save_plots: false
 
   

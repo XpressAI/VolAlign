@@ -18,13 +18,13 @@ dependencies = [
     "cellpose @ git+https://github.com/mansouralawi/cellpose.git",
     
     # Distributed processing dependencies (from cellpose distributed_deps)
-    "dask",
-    "distributed",
-    "dask_image",
-    "dask-cuda",
+    "dask==2025.7.0",
+    "distributed==2025.7.0",
+    "dask_image==2024.5.3",
+    "dask-cuda==25.8.0",
     "pyyaml",
     "zarr",
-    "dask_jobqueue",
+    "dask_jobqueue==0.9.0",
     "bokeh",
     "pyarrow",
 
@@ -40,6 +40,9 @@ dependencies = [
     "torch==2.4.*",
     "torchvision==0.19.*",
     "torchaudio==2.4.*",
+
+    # Additional packages
+    "scikit-learn",
     
     # Note: ExSeq-Toolbox will automatically install bigstream and nd2reader forks
     # All other dependencies will be automatically resolved by pip
