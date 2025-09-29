@@ -10,7 +10,7 @@ import zarr
 from skimage.measure import regionprops
 
 from .config import AppConfig, PipelineDataSourceConfig
-from .data_loader import DataLoader, DatasetInfo, load_zarr_as_dask
+from .data_loader import DataLoader, DatasetInfo, load_zarr_as_dask, AbstractDataLoader
 from .epitope_parser import EpitopeAnalysisParser, load_epitope_analysis
 from .models import EnhancedNucleusInfo, PipelineDataset, PipelineMetadata
 from .validation import validate_pipeline_config, ValidationError, PipelineValidationResult
@@ -18,7 +18,7 @@ from .validation import validate_pipeline_config, ValidationError, PipelineValid
 logger = logging.getLogger(__name__)
 
 
-class PipelineDataLoader(DataLoader):
+class PipelineDataLoader(DataLoader, AbstractDataLoader):
     """
     Data loader for VolAlign pipeline outputs.
     

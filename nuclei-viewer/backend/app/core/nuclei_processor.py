@@ -14,7 +14,7 @@ from scipy import ndimage
 from skimage import measure
 
 from .config import AppConfig
-from .data_loader import DataLoader, DatasetInfo
+from .data_loader import AbstractDataLoader, DataLoader, DatasetInfo
 from .models import NucleusInfo, EnhancedNucleusInfo, EpitopeAnalysisData
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ class MIPResult:
 class NucleiProcessor:
     """Main processor for nuclei analysis and MIP generation."""
 
-    def __init__(self, config: AppConfig, data_loader: Union[DataLoader, 'PipelineDataLoader']):
+    def __init__(self, config: AppConfig, data_loader: AbstractDataLoader):
         self.config = config
         self.data_loader = data_loader
         self._mip_cache: Dict[int, MIPResult] = {}

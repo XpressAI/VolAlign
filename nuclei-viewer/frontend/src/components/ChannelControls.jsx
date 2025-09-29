@@ -45,8 +45,9 @@ const ChannelControls = ({
 
   // Cleanup timeouts on unmount
   useEffect(() => {
+    const timeouts = { ...colorChangeTimeouts.current };
     return () => {
-      Object.values(colorChangeTimeouts.current).forEach(timeoutId => {
+      Object.values(timeouts).forEach(timeoutId => {
         clearTimeout(timeoutId);
       });
     };

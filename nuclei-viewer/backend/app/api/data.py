@@ -11,7 +11,9 @@ from pydantic import BaseModel
 
 from ..core.config import AppConfig, get_config
 from ..core.data_loader import DataLoader
-from ..core.shared_state import get_shared_data_loader, reset_shared_state
+from ..core.shared_state import get_shared_data_loader, reset_shared_state, set_shared_data_loader
+from ..core.data_loader_factory import create_data_loader
+from ..core.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +21,13 @@ router = APIRouter(prefix="/api/data", tags=["data"])
 
 
 def get_data_loader():
-    """Dependency to get the shared data loader instance."""
-    return get_shared_data_loader()
+    """Dependency to get or initialize the shared data loader instance."""
+    loader = get_shared_data_loader()
+    if loader is None:
+        config = get_config()
+        loader = create_data_loader(config)
+        set_shared_data_loader(loader)
+    return loader
 
 
 class DatasetDiscoveryResponse(BaseModel):

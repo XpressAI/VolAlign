@@ -1,292 +1,238 @@
-# Nuclei Viewer
+# Nuclei Viewer - User Guide
 
-A web application for visualizing segmented nuclei and their epitope tags from 3D microscopy data. Built with FastAPI backend and React frontend, designed to handle large Zarr datasets with real-time maximum intensity projection (MIP) generation.
-
-## Features
-
-- **Interactive Nuclei Browser**: Paginated view of segmented nuclei with thumbnail previews
-- **Multi-Channel Visualization**: Support for DAPI and multiple epitope tag channels
-- **Real-Time MIP Generation**: On-the-fly maximum intensity projections from 3D data
-- **Dynamic Channel Controls**: Adjust colors, opacity, and contrast for each channel
-- **Detailed Nucleus View**: Zoom into individual nuclei with comprehensive metadata
-- **3D Bounding Box Support**: Configurable XY padding around nuclei regions
-- **Efficient Data Handling**: Memory-optimized processing of large Zarr volumes
-
-## Architecture
-
-```
-nuclei-viewer/
-├── backend/           # FastAPI backend server
-│   ├── app/
-│   │   ├── api/       # REST API endpoints
-│   │   ├── core/      # Core processing modules
-│   │   └── main.py    # FastAPI application
-│   ├── requirements.txt
-│   └── run.py         # Server startup script
-├── frontend/          # React frontend application
-│   ├── src/
-│   │   ├── components/  # React components
-│   │   ├── services/    # API communication
-│   │   └── App.js       # Main application
-│   └── package.json
-├── config/            # Configuration files
-├── scripts/           # Setup and testing scripts
-└── README.md
-```
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.10 or higher
-- Node.js 16 or higher
-- npm or yarn
-
-### Option 1: Automated Setup (Recommended)
-
-```bash
-# Clone or navigate to the nuclei-viewer directory
-cd nuclei-viewer
-
-# Run the automated setup script
-python scripts/setup_and_test.py --start-server
-```
-
-This will:
-1. Generate synthetic test data
-2. Set up backend environment
-3. Install frontend dependencies
-4. Start the backend server
-5. Provide instructions for starting the frontend
-
-### Option 2: Manual Setup
-
-#### Backend Setup
-
-```bash
-cd backend
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On Windows:
-venv\Scripts\activate
-# On macOS/Linux:
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start the server
-python run.py
-```
-
-#### Frontend Setup
-
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Start development server
-npm start
-```
-
-#### Generate Test Data
-
-```bash
-cd scripts
-
-# Generate synthetic test data
-python generate_test_data.py --output-dir ../test_data
-```
-
-## Configuration
-
-The application uses YAML configuration files located in the `config/` directory.
-
-### Basic Configuration
-
-```yaml
-data:
-  base_path: "/path/to/your/zarr/files"
-  
-  segmentation:
-    file_pattern: "*_labels.zarr"
-    array_key: null  # or "labels" for zarr groups
-  
-  dapi_channel:
-    file_pattern: "*_dapi.zarr"
-    array_key: null  # or "raw" for zarr groups
-  
-  epitope_channels:
-    - name: "488nm"
-      file_pattern: "*_488.zarr"
-      array_key: null
-      default_color: "#00ff00"
-    - name: "561nm"
-      file_pattern: "*_561.zarr"
-      array_key: null
-      default_color: "#ff0000"
-
-processing:
-  min_object_size: 100    # Minimum nucleus size in voxels
-  pad_xy: 25             # XY padding around bounding boxes
-  max_objects_per_page: 10  # Nuclei per page
-  cache_mips: true       # Enable MIP caching
-```
-
-## Data Format
-
-The application expects Zarr files containing:
-
-1. **Segmentation Masks**: Labeled nuclei (uint16, each nucleus has unique label)
-2. **DAPI Channel**: Nuclear staining data (uint16)
-3. **Epitope Channels**: Signal channels for different epitope tags (uint16)
-
-### Supported Zarr Formats
-
-- **Direct Arrays**: Single zarr array per file
-- **Zarr Groups**: Multiple arrays within a single zarr file with keys
-
-## Usage
-
-### 1. Data Loading
-
-1. Open the application at `http://localhost:3000`
-2. Enter the path to your Zarr files
-3. Click "Discover Files" to scan for compatible data
-4. Click "Load Datasets" to load the data into memory
-
-### 2. Browsing Nuclei
-
-- Use pagination controls to navigate through nuclei
-- Adjust the number of nuclei per page (5, 10, 20, 50)
-- Click on any nucleus thumbnail to view details
-
-### 3. Channel Controls
-
-- Toggle channels on/off using the switches
-- Adjust opacity with sliders
-- Change colors using the color picker
-- Access advanced settings for contrast adjustment
-
-### 4. Detailed View
-
-- Click on a nucleus to open the detailed view
-- Switch between composite and individual channel views
-- View metadata and statistics
-- Download individual or composite images
-
-## API Documentation
-
-When the backend server is running, visit `http://localhost:8000/docs` for interactive API documentation.
-
-### Key Endpoints
-
-- `GET /api/data/discover` - Discover available datasets
-- `POST /api/data/load-all` - Load all datasets
-- `GET /api/nuclei/list` - Get paginated nuclei list
-- `POST /api/nuclei/mip` - Compute MIP for a nucleus
-- `GET /api/config/` - Get/update configuration
-
-## Development
-
-### Backend Development
-
-```bash
-cd backend
-
-# Install in development mode
-pip install -e .
-
-# Run with auto-reload
-python run.py --debug --reload
-
-# Run tests
-python -m pytest tests/
-```
-
-### Frontend Development
-
-```bash
-cd frontend
-
-# Start development server with hot reload
-npm start
-
-# Build for production
-npm run build
-
-# Run tests
-npm test
-```
-
-### Adding New Features
-
-1. **Backend**: Add new endpoints in `backend/app/api/`
-2. **Frontend**: Add new components in `frontend/src/components/`
-3. **Configuration**: Update config schema in `backend/app/core/config.py`
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Server won't start**
-   - Check Python version (3.10+ required)
-   - Verify all dependencies are installed
-   - Check port 8000 is not in use
-
-2. **Frontend can't connect to backend**
-   - Ensure backend server is running on port 8000
-   - Check CORS settings in configuration
-   - Verify proxy setting in `frontend/package.json`
-
-3. **Data loading fails**
-   - Verify Zarr file paths and patterns
-   - Check file permissions
-   - Ensure Zarr files are valid and readable
-
-4. **Memory issues with large datasets**
-   - Reduce `mip_chunk_size` in configuration
-   - Disable MIP caching for very large datasets
-   - Consider processing smaller regions
-
-### Performance Optimization
-
-- **Large Datasets**: Adjust chunk sizes and enable caching
-- **Many Channels**: Process channels selectively
-- **Slow Rendering**: Reduce image resolution or use progressive loading
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Built on top of the VolAlign microscopy processing pipeline
-- Uses Zarr for efficient array storage
-- Leverages Dask for distributed computing
-- UI components from Material-UI
-
-## Support
-
-For issues and questions:
-1. Check the troubleshooting section above
-2. Review the API documentation at `/docs`
-3. Check the browser console for frontend errors
-4. Review backend logs for server errors
+Nuclei Viewer is a web application for visualizing segmented nuclei and their epitope tags from 3D microscopy data. Built with a **FastAPI backend** and **React frontend**, it supports large Zarr datasets with real-time maximum intensity projections (MIPs) and integrates seamlessly with the **VolAlign pipeline**.
 
 ---
 
-**Note**: This application is designed for research use and handles large microscopy datasets. Ensure adequate system resources (RAM, storage) for your data size.
+## ✨ Features
+
+### Core Features
+- **Interactive Nuclei Browser**: Paginated exploration of segmented nuclei with thumbnails.
+- **Multi-Channel Visualization**: Supports DAPI and multiple epitope tag channels.
+- **Real-Time MIP Generation**: On-demand intensity projections from 3D data.
+- **Channel Controls**: Adjust colors, opacity, and contrast independently.
+- **Detailed Nucleus View**: Zoom into single nuclei with epitope details and metadata.
+- **Segmentation Bounding Box**: Customizable XY padding.
+- **Optimized Data Handling**: Memory-efficient processing of large Zarr volumes.
+
+### Pipeline Integration Features
+- **Direct VolAlign Integration**: Load pipeline outputs and analysis directly.
+- **Pre-computed Epitope Analysis**: Fast loading of JSON results with cutoffs.
+- **Epitope Calls & Confidence Scores**: Visualize positive/negative calls with thresholds.
+- **Quality Metrics**: Display per-nucleus quality and cutoff statistics.
+- **Performance Optimizations**: Eliminates on-the-fly computation for large datasets.
+
+---
+
+## 📂 Architecture
+
+```
+nuclei-viewer/
+├── backend/           # FastAPI server logic
+│   ├── app/           # API, core modules
+│   └── run.py         # Backend entrypoint
+├── frontend/          # React application
+│   └── src/           # Components, services
+├── config/            # Example configs
+└── scripts/           # Setup and validation scripts
+```
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python **3.10+**
+- Node.js **16+** (npm or yarn)
+- VolAlign pipeline outputs (optional, for pipeline mode)
+
+### Option 1 (Recommended): **Pipeline Integration Mode**
+```bash
+# Run VolAlign pipeline with epitope analysis
+cd /path/to/VolAlign
+python examples/selective_step_pipeline.py --step all --config config_template.yaml
+python examples/production_epitope_analysis.py --config config_template.yaml
+
+# Start nuclei-viewer with pipeline config
+cd nuclei-viewer
+python start_with_pipeline.py --config ../config_template.yaml
+```
+This will:
+- Detect pipeline outputs (`zarr_volumes`, `segmentation`, `epitope_analysis`)
+- Load precomputed statistics and results
+- Activate full epitope visualization mode
+
+### Option 2: **Automated Setup Script**
+```bash
+cd nuclei-viewer
+python scripts/setup_and_test.py --start-server
+```
+
+### Option 3: **Manual Setup**
+#### Backend
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate     # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+python run.py --config ../config/pipeline_config_example.yaml
+```
+
+#### Frontend
+```bash
+cd frontend
+npm install
+npm start
+```
+
+---
+
+## ⚙️ Configuration
+
+### Loading Order
+1. **Main VolAlign Config** (`../config_template.yaml`) – Recommended.
+2. **Local Config** (`nuclei-viewer/config/pipeline_config_example.yaml`).
+3. **Defaults** (synthetic test data).
+
+### Example Pipeline Config Section
+```yaml
+nuclei_viewer:
+  enabled: true
+  server:
+    host: "127.0.0.1"
+    port: 8000
+    debug: true
+    cors_origins: ["http://localhost:3000"]
+
+  data:
+    pipeline:
+      pipeline_working_directory: null # inherits from main config
+      reference_round: null             # inherits from data.reference_round
+      epitope_analysis_file: "epitope_analysis/nucleus_centric_analysis_results.json"
+      auto_discover_channels: true
+```
+
+### Manual Config Example
+```yaml
+nuclei_viewer:
+  enabled: true
+  data:
+    mode: "manual"
+    base_path: "/path/to/zarr/files"
+    segmentation:
+      file_pattern: "*_labels.zarr"
+    dapi_channel:
+      file_pattern: "*_dapi.zarr"
+    epitope_channels:
+      - name: "488nm"
+        file_pattern: "*_488.zarr"
+        default_color: "#00ff00"
+```
+
+---
+
+## 📊 Data Structures
+
+### Pipeline Mode
+```
+working_directory/
+├── zarr_volumes/      
+├── aligned/
+├── segmentation/
+└── epitope_analysis/
+    ├── nucleus_centric_analysis_results.json
+    └── nucleus_centric_analysis_summary.json
+```
+
+### Manual Mode
+- Segmentation masks (*.zarr)
+- DAPI reference channel (*.zarr)
+- Epitope channels (*.zarr)
+
+---
+
+## 🖥️ Usage
+
+### Pipeline Mode
+1. Start backend + frontend servers.
+2. Visit `http://localhost:3000`.
+3. Browse nuclei with epitope calls, confidence scores, metadata.
+
+### Manual Mode
+1. Provide file paths in config.
+2. Use viewer to explore segmentation and intensity channels only.
+
+### Common Features
+- Paginate nuclei browser.
+- Change channel visibility/colors.
+- Export images of nuclei/overlays.
+
+---
+
+## 🔌 API Endpoints
+Accessible at `http://localhost:8000/docs`.
+
+- `GET /api/data/discover` → Discover datasets  
+- `POST /api/data/load-all` → Load datasets  
+- `GET /api/nuclei/list` → Paginate nuclei  
+- `POST /api/nuclei/mip` → MIP for a nucleus  
+- `GET /api/config/` → Get/update config  
+
+---
+
+## 🧑‍💻 Development
+
+### Backend
+```bash
+pip install -e .
+python run.py --debug --reload
+pytest
+```
+
+### Frontend
+```bash
+npm start
+npm run build
+npm test
+```
+
+---
+
+## 🛠️ Troubleshooting
+
+- **Server won’t start** → Check Python version, dependencies, free port `8000`.  
+- **Frontend not connecting** → Check CORS origins and backend availability.  
+- **Data not loading** → Verify config paths and file permissions.  
+- **Performance issues** → Reduce `max_objects_per_page`, adjust `mip_chunk_size`.  
+
+---
+
+## 📦 Utility Scripts
+
+- `start_with_pipeline.py` – starts with pipeline config and validation.  
+- `check_config.py` – tests config consistency.  
+- `test_pipeline_integration.py` – validates epitope integration pipeline.  
+
+---
+
+## 📜 License
+MIT License (see `LICENSE` file).
+
+---
+
+## 🙌 Acknowledgments
+- Built on **VolAlign** microscopy pipeline.  
+- Uses **Zarr** for scalable array storage.  
+- Uses **Dask** for distributed computation.  
+- UI powered by **React + Material-UI**.  
+
+---
+
+## 🆘 Support
+1. Use API docs `/docs`.  
+2. Check troubleshooting section.  
+3. See backend logs + browser console for errors.  
+
+---
+
+**NOTE:** Designed for research use with large microscopy datasets. Ensure sufficient hardware (RAM, storage) for optimal performance.

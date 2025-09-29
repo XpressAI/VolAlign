@@ -110,39 +110,14 @@ def main():
                 else:
                     logger.info(f"{name} file is valid: {path_obj}")
 
-        # Handle different configuration modes
-        if hasattr(config.data, 'pipeline') and config.data.pipeline:
-            # Pipeline mode - validate pipeline structure
-            logger.info("Pipeline mode detected - validating pipeline structure")
-            working_dir = Path(config.data.pipeline.pipeline_working_directory)
-            if working_dir.exists():
-                logger.info(f"Pipeline working directory is valid: {working_dir}")
-                
-                # Check for key directories
-                zarr_dir = working_dir / "zarr_volumes"
-                seg_dir = working_dir / "segmentation"
-                
-                if zarr_dir.exists():
-                    logger.info(f"Zarr volumes directory found: {zarr_dir}")
-                else:
-                    logger.warning(f"Zarr volumes directory not found: {zarr_dir}")
-                    
-                if seg_dir.exists():
-                    logger.info(f"Segmentation directory found: {seg_dir}")
-                else:
-                    logger.warning(f"Segmentation directory not found: {seg_dir}")
-            else:
-                logger.warning(f"Pipeline working directory does not exist: {working_dir}")
-        else:
-            # Manual mode - validate individual file paths
-            logger.info("Manual mode detected - validating individual file paths")
-            if hasattr(config.data, 'segmentation') and config.data.segmentation:
-                validate_file_path(config.data.segmentation.file_path, "Segmentation")
-            if hasattr(config.data, 'dapi_channel') and config.data.dapi_channel:
-                validate_file_path(config.data.dapi_channel.file_path, "DAPI channel")
-            if hasattr(config.data, 'epitope_channels') and config.data.epitope_channels:
-                for epitope in config.data.epitope_channels:
-                    validate_file_path(epitope.file_path, f"Epitope channel {epitope.name}")
+        # Initialize appropriate data loader from factory
+        from app.core.data_loader_factory import create_data_loader
+        try:
+            data_loader = create_data_loader(config)
+            logger.info(f"Initialized data loader: {data_loader.__class__.__name__}")
+        except Exception as e:
+            logger.error(f"Failed to initialize data loader: {e}")
+            sys.exit(1)
 
         # Start the server
         uvicorn.run(

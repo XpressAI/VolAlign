@@ -146,8 +146,17 @@ const ImageViewer = ({
         return;
       }
 
-      // Render each channel
-      for (const { channelName, img } of loadedImages) {
+      // For composite generation, show only DAPI channel to avoid bias from empty channels
+      // Find DAPI channel (typically contains 'dapi' in name or is the 405nm channel)
+      const dapiChannel = loadedImages.find(({ channelName }) =>
+        channelName.toLowerCase().includes('dapi') ||
+        channelName.includes('405') ||
+        channelName.toLowerCase().includes('round1_405')
+      );
+      
+      if (dapiChannel) {
+        // Render only DAPI channel
+        const { channelName, img } = dapiChannel;
         const settings = channelSettings[channelName] || {};
         const opacity = settings.opacity || 0.8;
         
@@ -179,6 +188,42 @@ const ImageViewer = ({
         } else {
           // Draw image directly
           ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+        }
+      } else {
+        // Fallback: render all channels if no DAPI found
+        for (const { channelName, img } of loadedImages) {
+          const settings = channelSettings[channelName] || {};
+          const opacity = settings.opacity || 0.8;
+          
+          // Set blend mode and opacity
+          ctx.globalAlpha = opacity;
+          ctx.globalCompositeOperation = 'source-over';
+          
+          // For colored channels, we need to apply color tinting
+          if (settings.color && settings.color !== '#ffffff') {
+            // Create a temporary canvas for color manipulation
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = img.width;
+            tempCanvas.height = img.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Clear temp canvas
+            tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+            
+            // Draw original image
+            tempCtx.drawImage(img, 0, 0);
+            
+            // Apply color tint
+            tempCtx.globalCompositeOperation = 'multiply';
+            tempCtx.fillStyle = settings.color;
+            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            
+            // Draw tinted image
+            ctx.drawImage(tempCanvas, x, y, scaledWidth, scaledHeight);
+          } else {
+            // Draw image directly
+            ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+          }
         }
       }
 

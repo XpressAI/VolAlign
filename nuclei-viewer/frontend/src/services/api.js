@@ -7,7 +7,7 @@ import axios from 'axios';
 // Create axios instance with default configuration
 const api = axios.create({
   baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8000',
-  timeout: 30000, // 30 second timeout for large data operations
+  timeout: 120000, // 2 minute timeout for large pipeline data operations
   headers: {
     'Content-Type': 'application/json',
   },
@@ -157,6 +157,48 @@ export const nucleiAPI = {
   // Clear cache
   clearCache: async () => {
     const response = await api.delete('/api/nuclei/cache/clear');
+    return response.data;
+  },
+
+  // Pipeline mode endpoints
+  getPipelineModeInfo: async () => {
+    const response = await api.get('/api/nuclei/pipeline/mode');
+    return response.data;
+  },
+
+  // Get pipeline metadata
+  getPipelineMetadata: async () => {
+    const response = await api.get('/api/nuclei/pipeline/metadata');
+    return response.data;
+  },
+
+  // Get epitope analysis for specific nucleus
+  getEpitopeAnalysis: async (nucleusLabel) => {
+    const response = await api.get(`/api/nuclei/${nucleusLabel}/epitope-analysis`);
+    return response.data;
+  },
+
+  // Get cutoff data
+  getCutoffData: async () => {
+    const response = await api.get('/api/nuclei/pipeline/cutoffs');
+    return response.data;
+  },
+
+  // Get epitope statistics
+  getEpitopeStatistics: async () => {
+    const response = await api.get('/api/nuclei/pipeline/statistics');
+    return response.data;
+  },
+
+  // Validate pipeline structure
+  validatePipeline: async () => {
+    const response = await api.get('/api/nuclei/pipeline/validate');
+    return response.data;
+  },
+
+  // Get pipeline health status
+  getPipelineHealth: async () => {
+    const response = await api.get('/api/nuclei/pipeline/health');
     return response.data;
   },
 };

@@ -11,10 +11,50 @@ import dask.array as da
 import numpy as np
 import zarr
 from skimage.measure import label, regionprops
+from abc import ABC, abstractmethod
 
 from .config import AppConfig, EpitopeChannelConfig
 
 logger = logging.getLogger(__name__)
+
+
+class AbstractDataLoader(ABC):
+    """Abstract interface for different data loading backends."""
+
+    @abstractmethod
+    def discover_datasets(self) -> Dict[str, List[Path]]:
+        """Discover and return available datasets."""
+        pass
+
+    @abstractmethod
+    def load_segmentation(self, file_path: Optional[Path] = None, array_key: Optional[str] = None):
+        """Load a segmentation dataset."""
+        pass
+
+    @abstractmethod
+    def load_dapi_channel(self, file_path: Optional[Path] = None, array_key: Optional[str] = None):
+        """Load the DAPI channel dataset."""
+        pass
+
+    @abstractmethod
+    def load_epitope_channels(self, file_paths: Optional[Dict[str, Path]] = None):
+        """Load epitope channel datasets."""
+        pass
+
+    @abstractmethod
+    def load_all_datasets(self) -> None:
+        """Load all datasets (segmentation, DAPI, epitope channels)."""
+        pass
+
+    @abstractmethod
+    def extract_nuclei_info(self, force_reload: bool = False):
+        """Extract nucleus information objects."""
+        pass
+
+    @abstractmethod
+    def get_nucleus_by_label(self, label: int):
+        """Retrieve a single nucleus by its label."""
+        pass
 
 
 class DatasetInfo:
@@ -76,7 +116,7 @@ class NucleusInfo:
         return f"NucleusInfo(label={self.label}, area={self.area}, bbox={self.bbox})"
 
 
-class DataLoader:
+class DataLoader(AbstractDataLoader):
     """Main data loader for nuclei visualization."""
 
     def __init__(self, config: AppConfig):

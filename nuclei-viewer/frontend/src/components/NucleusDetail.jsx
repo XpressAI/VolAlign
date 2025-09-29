@@ -2,7 +2,7 @@
  * NucleusDetail component - detailed view of a selected nucleus
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
   Card,
@@ -28,88 +28,164 @@ import {
   Close as CloseIcon,
   Refresh as RefreshIcon,
   Download as DownloadIcon,
+  CheckCircle as CheckCircleIcon,
+  Cancel as CancelIcon,
 } from '@mui/icons-material';
 
 import { nucleiAPI, utils } from '../services/api';
 import ImageViewer from './ImageViewer';
 
-const NucleusDetail = ({ nucleus, channelSettings, onClose }) => {
+const NucleusDetail = ({ nucleus, channelSettings, onClose, onEpitopeDataChange }) => {
   const [mipData, setMipData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [compositeImage, setCompositeImage] = useState(null);
+  const [compositeLoading] = useState(false);
+  
+  // Refs for managing timeouts and request cancellation
+  const loadTimeoutRef = useRef(null);
+  const compositeTimeoutRef = useRef(null);
+  const currentNucleusRef = useRef(null);
 
-  const loadNucleusMIP = useCallback(async () => {
-    if (!nucleus) return;
+  const loadNucleusMIP = useCallback(async (nucleusToLoad, channels) => {
+    if (!nucleusToLoad) return;
+    if (!channels || channels.length === 0) {
+      return; // prevent infinite loop when no channels
+    }
+
+    // Prevent duplicate load requests for the same nucleus with identical channels
+    if (mipData && mipData.nucleus_label === nucleusToLoad.label) {
+      const loadedChannels = new Set(Object.keys(mipData.individual_mips || {}));
+      const requestedChannels = new Set(channels);
+      let allPresent = true;
+      for (const c of requestedChannels) {
+        if (!loadedChannels.has(c)) {
+          allPresent = false;
+          break;
+        }
+      }
+      if (allPresent) {
+        return; // already loaded required channels
+      }
+    }
+    
+    // Store current nucleus for cancellation check
+    const nucleusLabel = nucleusToLoad.label;
+    currentNucleusRef.current = nucleusLabel;
     
     setLoading(true);
     setError(null);
+    setMipData(null); // Clear previous data immediately
+    setCompositeImage(null); // Clear previous composite
     
     try {
-      // Get enabled channels
-      const enabledChannels = Object.entries(channelSettings)
-        .filter(([_, settings]) => settings.enabled)
-        .map(([channelName, _]) => channelName);
-
-      if (enabledChannels.length === 0) {
+      if (channels.length === 0) {
         setError('No channels enabled');
         return;
       }
 
       const mipRequest = {
-        nucleus_label: nucleus.label,
-        channels: enabledChannels,
+        nucleus_label: nucleusLabel,
+        channels: channels,
         force_recompute: false,
         return_individual: true,
-        return_composite: false, // We'll generate composite on frontend
+        return_composite: false, // We'll generate composite separately
       };
 
       const result = await nucleiAPI.computeMIP(mipRequest);
-      setMipData(result);
+      
+      // Check if this request is still relevant (user hasn't switched to another nucleus)
+      if (currentNucleusRef.current === nucleusLabel) {
+        setMipData(result);
+        
+        // Pass epitope data to parent component if available
+        if (onEpitopeDataChange && result.epitope_calls) {
+          onEpitopeDataChange({
+            epitope_calls: result.epitope_calls,
+            confidence_scores: result.confidence_scores || {}
+          });
+        }
+      }
 
     } catch (err) {
-      setError(utils.formatErrorMessage(err));
+      // Only show error if this request is still relevant
+      if (currentNucleusRef.current === nucleusLabel) {
+        setError(utils.formatErrorMessage(err));
+      }
     } finally {
-      setLoading(false);
+      // Only clear loading if this request is still relevant
+      if (currentNucleusRef.current === nucleusLabel) {
+        setLoading(false);
+      }
     }
-  }, [nucleus, channelSettings]);
+  }, [onEpitopeDataChange]);
 
   const generateComposite = useCallback(async () => {
     if (!mipData || !mipData.individual_mips || !nucleus) return;
 
-    try {
-      // Request composite from backend with current channel settings
-      const mipRequest = {
-        nucleus_label: nucleus.label,
-        channels: Object.keys(mipData.individual_mips),
-        force_recompute: false,
-        channel_settings: channelSettings,
-        return_individual: false,
-        return_composite: true,
-      };
+    // Always use frontend rendering for color changes - no API calls
+    // This ensures immediate visual feedback and eliminates API spam
+    setCompositeImage(null);
+    
+    // Note: We're intentionally not making any API calls here.
+    // The ImageViewer component will handle all color compositing on the frontend.
+    // This provides immediate visual feedback and eliminates the 404 API call issues.
+    
+  }, [mipData, nucleus]);
 
-      const result = await nucleiAPI.computeMIP(mipRequest);
-      setCompositeImage(result.composite_mip);
-
-    } catch (err) {
-      console.error('Failed to generate composite:', err);
-    }
-  }, [mipData, nucleus, channelSettings]);
-
-  // Load MIP data when nucleus changes
+  // Load MIP data when nucleus changes (with debouncing for rapid switching)
   useEffect(() => {
-    if (nucleus) {
-      loadNucleusMIP();
+    if (!nucleus) {
+      setMipData(null);
+      setCompositeImage(null);
+      return;
     }
-  }, [nucleus, loadNucleusMIP]);
+    
+    // Clear any existing timeout
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current);
+    }
+    
+    // Get enabled channels
+    const enabledChannels = Object.entries(channelSettings)
+      .filter(([_, settings]) => settings && settings.enabled)
+      .map(([channelName, _]) => channelName);
+    
+    // Debounce nucleus loading to handle rapid switching
+    loadTimeoutRef.current = setTimeout(() => {
+      loadNucleusMIP(nucleus, enabledChannels);
+    }, 150); // 150ms debounce for nucleus switching
+    
+    return () => {
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+      }
+    };
+  }, [nucleus, channelSettings, loadNucleusMIP]);
 
-  // Update composite when channel settings change
+  // Update composite when MIP data loads (no debouncing needed since no API calls)
   useEffect(() => {
-    if (mipData && channelSettings) {
-      generateComposite();
-    }
-  }, [mipData, channelSettings, generateComposite]);
+    if (!mipData || !nucleus) return;
+    
+    // Immediately clear composite to force frontend rendering
+    generateComposite();
+    
+  }, [mipData, generateComposite]);
+  
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+      }
+      const timeoutId = compositeTimeoutRef.current;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      compositeTimeoutRef.current = null;
+    };
+  }, []);
 
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
@@ -169,55 +245,105 @@ const NucleusDetail = ({ nucleus, channelSettings, onClose }) => {
 
     return (
       <Box>
-        {Object.entries(channelStats).map(([channelName, stats]) => (
-          <Card key={channelName} variant="outlined" sx={{ mb: 2 }}>
-            <CardContent>
-              <Box display="flex" alignItems="center" gap={1} mb={1}>
-                <Box
-                  width={12}
-                  height={12}
-                  borderRadius="50%"
-                  bgcolor={channelSettings[channelName]?.color || '#ffffff'}
-                  border="1px solid #ccc"
-                />
-                <Typography variant="h6">{channelName}</Typography>
-                <Chip 
-                  label={channelSettings[channelName]?.enabled ? 'Enabled' : 'Disabled'}
-                  size="small"
-                  color={channelSettings[channelName]?.enabled ? 'success' : 'default'}
-                />
-              </Box>
+        {Object.entries(channelStats).map(([channelName, stats]) => {
+          // Check if this channel has epitope call data
+          const hasEpitopeCall = mipData.epitope_calls && channelName in mipData.epitope_calls;
+          const epitopeCall = hasEpitopeCall ? mipData.epitope_calls[channelName] : null;
+          const confidenceScore = mipData.confidence_scores && channelName in mipData.confidence_scores
+            ? mipData.confidence_scores[channelName]
+            : null;
+          const is405Channel = channelName.endsWith('_405');
+
+          return (
+            <Card key={channelName} variant="outlined" sx={{ mb: 2 }}>
+              <CardContent>
+                <Box display="flex" alignItems="center" gap={1} mb={1}>
+                  <Box
+                    width={12}
+                    height={12}
+                    borderRadius="50%"
+                    bgcolor={channelSettings[channelName]?.color || '#ffffff'}
+                    border="1px solid #ccc"
+                  />
+                  <Typography variant="h6">{channelName}</Typography>
+                  
+                  {/* Epitope Classification Tag - only for non-405nm channels */}
+                  {!is405Channel && hasEpitopeCall && (
+                    <Chip
+                      icon={epitopeCall ? <CheckCircleIcon /> : <CancelIcon />}
+                      label={epitopeCall ? 'Positive' : 'Negative'}
+                      size="small"
+                      color={epitopeCall ? 'success' : 'default'}
+                      variant="outlined"
+                      sx={{
+                        fontSize: '0.7rem',
+                        height: 24,
+                        '& .MuiChip-icon': { fontSize: '0.8rem' }
+                      }}
+                    />
+                  )}
+                  
+                  {/* DAPI Channel Tag - for 405nm channels */}
+                  {is405Channel && (
+                    <Chip
+                      label="DAPI"
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                      sx={{
+                        fontSize: '0.7rem',
+                        height: 24
+                      }}
+                    />
+                  )}
+                  
+                  <Chip
+                    label={channelSettings[channelName]?.enabled ? 'Enabled' : 'Disabled'}
+                    size="small"
+                    color={channelSettings[channelName]?.enabled ? 'success' : 'default'}
+                  />
+                </Box>
+                
+                {/* Confidence Score - only for epitope channels with calls */}
+                {!is405Channel && hasEpitopeCall && confidenceScore !== null && (
+                  <Box mb={1}>
+                    <Typography variant="caption" color="text.secondary">
+                      Confidence: {(confidenceScore * 100).toFixed(1)}%
+                    </Typography>
+                  </Box>
+                )}
               
-              <Grid container spacing={2}>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">
-                    Min: {stats.min.toFixed(1)}
-                  </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Min: {stats.min.toFixed(1)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Max: {stats.max.toFixed(1)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Mean: {stats.mean.toFixed(1)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Std: {stats.std.toFixed(1)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Typography variant="body2" color="text.secondary">
+                      Non-zero voxels: {stats.nonzero_voxels.toLocaleString()}
+                    </Typography>
+                  </Grid>
                 </Grid>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">
-                    Max: {stats.max.toFixed(1)}
-                  </Typography>
-                </Grid>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">
-                    Mean: {stats.mean.toFixed(1)}
-                  </Typography>
-                </Grid>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">
-                    Std: {stats.std.toFixed(1)}
-                  </Typography>
-                </Grid>
-                <Grid item xs={12}>
-                  <Typography variant="body2" color="text.secondary">
-                    Non-zero voxels: {stats.nonzero_voxels.toLocaleString()}
-                  </Typography>
-                </Grid>
-              </Grid>
-            </CardContent>
-          </Card>
-        ))}
+              </CardContent>
+            </Card>
+          );
+        })}
       </Box>
     );
   };
@@ -227,32 +353,89 @@ const NucleusDetail = ({ nucleus, channelSettings, onClose }) => {
 
     return (
       <Grid container spacing={2}>
-        {Object.entries(mipData.individual_mips).map(([channelName, imageData]) => (
-          <Grid item xs={12} sm={6} key={channelName}>
-            <Card variant="outlined">
-              <CardContent>
-                <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
-                  <Typography variant="h6">{channelName}</Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() => handleDownload(imageData, `nucleus_${nucleus.label}_${channelName}.png`)}
-                  >
-                    <DownloadIcon fontSize="small" />
-                  </IconButton>
-                </Box>
-                
-                <ImageViewer
-                  images={{ [channelName]: imageData }}
-                  channelSettings={{ [channelName]: channelSettings[channelName] }}
-                  width={250}
-                  height={250}
-                  showControls={true}
-                  allowZoom={true}
-                />
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
+        {Object.entries(mipData.individual_mips).map(([channelName, imageData]) => {
+          // Check if this channel has epitope call data (exclude 405nm DAPI channels)
+          const hasEpitopeCall = mipData.epitope_calls && channelName in mipData.epitope_calls;
+          const epitopeCall = hasEpitopeCall ? mipData.epitope_calls[channelName] : null;
+          const confidenceScore = mipData.confidence_scores && channelName in mipData.confidence_scores
+            ? mipData.confidence_scores[channelName]
+            : null;
+          const is405Channel = channelName.endsWith('_405');
+
+          // Debug logging for each channel
+          console.log(`Individual Channel ${channelName}:`, {
+            hasEpitopeCall,
+            epitopeCall,
+            confidenceScore,
+            is405Channel
+          });
+
+          return (
+            <Grid item xs={12} sm={6} key={channelName}>
+              <Card variant="outlined">
+                <CardContent>
+                  <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <Typography variant="h6">{channelName}</Typography>
+                      {/* Epitope Classification Tag - only for non-405nm channels */}
+                      {!is405Channel && hasEpitopeCall && (
+                        <Chip
+                          icon={epitopeCall ? <CheckCircleIcon /> : <CancelIcon />}
+                          label={epitopeCall ? 'Positive' : 'Negative'}
+                          size="small"
+                          color={epitopeCall ? 'success' : 'default'}
+                          variant="outlined"
+                          sx={{
+                            fontSize: '0.7rem',
+                            height: 24,
+                            '& .MuiChip-icon': { fontSize: '0.8rem' }
+                          }}
+                        />
+                      )}
+                      {/* DAPI Channel Tag - for 405nm channels */}
+                      {is405Channel && (
+                        <Chip
+                          label="DAPI"
+                          size="small"
+                          color="primary"
+                          variant="outlined"
+                          sx={{
+                            fontSize: '0.7rem',
+                            height: 24
+                          }}
+                        />
+                      )}
+                    </Box>
+                    <IconButton
+                      size="small"
+                      onClick={() => handleDownload(imageData, `nucleus_${nucleus.label}_${channelName}.png`)}
+                    >
+                      <DownloadIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                  
+                  {/* Confidence Score - only for epitope channels with calls */}
+                  {!is405Channel && hasEpitopeCall && confidenceScore !== null && (
+                    <Box mb={1}>
+                      <Typography variant="caption" color="text.secondary">
+                        Confidence: {(confidenceScore * 100).toFixed(1)}%
+                      </Typography>
+                    </Box>
+                  )}
+                  
+                  <ImageViewer
+                    images={{ [channelName]: imageData }}
+                    channelSettings={{ [channelName]: channelSettings[channelName] }}
+                    width={250}
+                    height={250}
+                    showControls={true}
+                    allowZoom={true}
+                  />
+                </CardContent>
+              </Card>
+            </Grid>
+          );
+        })}
       </Grid>
     );
   };
@@ -334,7 +517,14 @@ const NucleusDetail = ({ nucleus, channelSettings, onClose }) => {
         {activeTab === 0 && (
           // Composite View
           <Box>
-            {compositeImage ? (
+            {compositeLoading ? (
+              <Box display="flex" flexDirection="column" alignItems="center" py={4}>
+                <CircularProgress />
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                  Generating composite image...
+                </Typography>
+              </Box>
+            ) : compositeImage ? (
               <Box display="flex" flexDirection="column" alignItems="center">
                 <ImageViewer
                   images={{ composite: compositeImage }}

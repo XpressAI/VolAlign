@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from ..core.config import AppConfig, get_config
 from ..core.nuclei_processor import MIPResult
 from ..core.shared_state import get_shared_data_loader, get_shared_nuclei_processor
+from ..core.data_loader_factory import create_data_loader
 from ..core.validation import validate_pipeline_config, PipelineValidationResult
 
 logger = logging.getLogger(__name__)
@@ -20,13 +21,29 @@ router = APIRouter(prefix="/api/nuclei", tags=["nuclei"])
 
 
 def get_data_loader():
-    """Dependency to get the shared data loader instance."""
-    return get_shared_data_loader()
+    """Dependency to get or initialize the shared data loader instance."""
+    state_loader = get_shared_data_loader()
+    if state_loader is None:
+        config = get_config()
+        from ..core.shared_state import set_shared_data_loader
+        loader = create_data_loader(config)
+        set_shared_data_loader(loader)
+        return loader
+    return state_loader
 
 
 def get_nuclei_processor():
-    """Dependency to get the shared nuclei processor instance."""
-    return get_shared_nuclei_processor()
+    """Dependency to get or initialize the shared nuclei processor instance."""
+    processor = get_shared_nuclei_processor()
+    if processor is None:
+        from ..core.shared_state import set_shared_nuclei_processor
+        from ..core.nuclei_processor import NucleiProcessor
+        config = get_config()
+        data_loader = get_data_loader()
+        # Ensure correct parameter order: (config, data_loader)
+        processor = NucleiProcessor(config, data_loader)
+        set_shared_nuclei_processor(processor)
+    return processor
 
 
 class NucleusSummaryResponse(BaseModel):
@@ -194,6 +211,19 @@ async def list_nuclei(
         nuclei_summaries = []
         for nucleus in nuclei_page:
             summary = processor.get_nucleus_summary(nucleus.label)
+
+            # Enrich with channel and confidence information if available
+            if hasattr(nucleus, "epitope_analysis") and nucleus.epitope_analysis:
+                summary["epitope_calls"] = nucleus.epitope_analysis.epitope_calls or {}
+                summary["confidence_scores"] = (
+                    nucleus.epitope_analysis.confidence_scores or {}
+                )
+                summary["quality_score"] = nucleus.epitope_analysis.quality_score
+
+            # Always include available channels if present
+            if hasattr(nucleus, "available_channels"):
+                summary["available_channels"] = nucleus.available_channels
+
             nuclei_summaries.append(NucleusSummaryResponse(**summary))
 
         return NucleiPageResponse(
@@ -237,10 +267,23 @@ async def compute_mip(request: MIPRequest):
     Compute maximum intensity projection for a nucleus.
     """
     try:
-        # Get processor manually to avoid dependency injection issues
-        from ..core.shared_state import get_shared_nuclei_processor, get_shared_data_loader
+        # Ensure processor and data_loader are initialized
+        from ..core.shared_state import (
+            get_shared_nuclei_processor,
+            set_shared_nuclei_processor,
+            get_shared_data_loader,
+        )
         processor = get_shared_nuclei_processor()
         data_loader = get_shared_data_loader()
+        if processor is None:
+            from ..core.nuclei_processor import NucleiProcessor
+            if data_loader is None:
+                from ..core.shared_state import get_shared_data_loader
+                data_loader = get_shared_data_loader()
+            from ..core.config import get_config
+            config = get_config()
+            processor = NucleiProcessor(config=config,data_loader=data_loader)
+            set_shared_nuclei_processor(processor)
         
         # Compute MIP
         mip_result = processor.compute_nucleus_mip(
@@ -399,7 +442,7 @@ async def clear_cache(processor=Depends(get_nuclei_processor)):
 
 @router.get("/stats")
 async def get_nuclei_stats(
-    data_loader=Depends(get_data_loader), processor=Depends(get_nuclei_processor)
+    data_loader=Depends(get_data_loader)
 ):
     """
     Get statistics about the nuclei dataset.
@@ -411,11 +454,20 @@ async def get_nuclei_stats(
 
         nuclei = data_loader.nuclei
 
+        # Ensure processor exists
+        from ..core.shared_state import get_shared_nuclei_processor, set_shared_nuclei_processor
+        processor = get_shared_nuclei_processor()
+        if processor is None:
+            from ..core.nuclei_processor import NucleiProcessor
+            config = get_config()
+            processor = NucleiProcessor(config, data_loader)
+            set_shared_nuclei_processor(processor)
+
         if not nuclei:
             return {
                 "total_nuclei": 0,
                 "area_stats": {},
-                "cache_info": processor.get_cache_info(),
+                "cache_info": {},
             }
 
         # Compute area statistics
@@ -435,11 +487,18 @@ async def get_nuclei_stats(
             "x_range": [min(c[2] for c in centroids), max(c[2] for c in centroids)],
         }
 
+        # Try to fetch cache info safely
+        cache_info = {}
+        try:
+            cache_info = processor.get_cache_info()
+        except Exception:
+            logger.warning("Processor cache info unavailable")
+
         return {
             "total_nuclei": len(nuclei),
             "area_stats": area_stats,
             "centroid_stats": centroid_stats,
-            "cache_info": processor.get_cache_info(),
+            "cache_info": cache_info,
             "processing_params": {
                 "min_object_size": get_config().processing.min_object_size,
                 "pad_xy": get_config().processing.pad_xy,

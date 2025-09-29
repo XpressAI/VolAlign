@@ -1369,3 +1369,202 @@ class EpitopeAnalyzer:
             print(f"  - {file_type}: {file_path}")
 
         return saved_files
+
+    def _save_as_csv(self, results: Dict[str, Any], csv_path: Path):
+        """Save intensity data as CSV format with new round_channel structure."""
+        try:
+            import pandas as pd
+
+            # Extract intensity data if available
+            intensity_data = results.get("intensity_data", {})
+            analysis_results = results.get("analysis_results", {})
+
+            if not intensity_data:
+                print("No intensity data found for CSV export")
+                return
+
+            # Convert to DataFrame format
+            rows = []
+            for nucleus_label, nucleus_data in intensity_data.items():
+                if hasattr(nucleus_data, "nuclei_intensities"):
+                    row = {
+                        "nucleus_label": nucleus_label,
+                        "centroid_z": nucleus_data.spatial_location[0],
+                        "centroid_y": nucleus_data.spatial_location[1],
+                        "centroid_x": nucleus_data.spatial_location[2],
+                        "bbox_min_z": nucleus_data.bounding_box[0],
+                        "bbox_min_y": nucleus_data.bounding_box[1],
+                        "bbox_min_x": nucleus_data.bounding_box[2],
+                        "bbox_max_z": nucleus_data.bounding_box[3],
+                        "bbox_max_y": nucleus_data.bounding_box[4],
+                        "bbox_max_x": nucleus_data.bounding_box[5],
+                        "rounds_processed": ",".join(nucleus_data.rounds_processed),
+                    }
+
+                    # Add intensity values for each round_channel and region
+                    for (
+                        round_channel,
+                        intensity,
+                    ) in nucleus_data.nuclei_intensities.items():
+                        row[f"{round_channel}_nuclei"] = intensity
+                    for (
+                        round_channel,
+                        intensity,
+                    ) in nucleus_data.shell_intensities.items():
+                        row[f"{round_channel}_shell"] = intensity
+                    for (
+                        round_channel,
+                        intensity,
+                    ) in nucleus_data.combined_intensities.items():
+                        row[f"{round_channel}_combined"] = intensity
+
+                    # Add epitope calls if available
+                    if nucleus_label in analysis_results:
+                        analysis_result = analysis_results[nucleus_label]
+                        for (
+                            round_channel,
+                            call,
+                        ) in analysis_result.epitope_calls.items():
+                            row[f"{round_channel}_positive"] = call
+                            row[f"{round_channel}_cutoff"] = (
+                                analysis_result.cutoff_values.get(round_channel, 0.0)
+                            )
+                            row[f"{round_channel}_confidence"] = (
+                                analysis_result.confidence_scores.get(
+                                    round_channel, 0.0
+                                )
+                            )
+
+                    rows.append(row)
+
+            if rows:
+                df = pd.DataFrame(rows)
+                df.to_csv(csv_path, index=False)
+                print(f"CSV data saved with {len(rows)} nuclei")
+
+        except ImportError:
+            print("Warning: pandas not available, skipping CSV format")
+        except Exception as e:
+            print(f"Error saving CSV: {e}")
+
+    def run_complete_nucleus_centric_analysis(
+        self,
+        nucleus_labels: Optional[List[int]] = None,
+        max_nuclei: Optional[int] = None,
+        save_results: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Run complete nucleus-centric epitope analysis pipeline.
+
+        Args:
+            nucleus_labels: Specific nucleus labels to analyze (None for all)
+            max_nuclei: Maximum number of nuclei to process
+            save_results: Whether to save results to files
+
+        Returns:
+            Dictionary containing all analysis results
+        """
+        print("Starting nucleus-centric epitope analysis...")
+
+        # Run the main analysis
+        intensity_data, cutoffs, analysis_results = (
+            self.analyze_all_epitopes_nucleus_centric(
+                nucleus_labels=nucleus_labels, max_nuclei=max_nuclei
+            )
+        )
+
+        # Compute distribution statistics if requested
+        distributions = {}
+        if self.save_detailed_stats:
+            print("Computing distribution statistics...")
+            all_epitope_channels = self.discover_epitope_channels()
+            distributions = self.analyzer.compute_all_distributions(
+                intensity_data=intensity_data,
+                all_epitope_channels=all_epitope_channels,
+                region=self.default_region,
+            )
+
+        # Compile results
+        results = {
+            "metadata": {
+                "analysis_type": "nucleus_centric_epitope_analysis",
+                "n_nuclei": len(intensity_data),
+                "n_rounds": len(
+                    set(
+                        round_name
+                        for nucleus_data in intensity_data.values()
+                        for round_name in nucleus_data.rounds_processed
+                    )
+                ),
+                "analysis_region": self.default_region,
+                "cutoff_method": self.statistical_config.get("cutoff_method", "otsu"),
+                "shell_parameters": asdict(self.shell_config),
+            },
+            "intensity_data": intensity_data,
+            "cutoffs": cutoffs,
+            "analysis_results": analysis_results,
+            "distributions": distributions,
+        }
+
+        # Save results if requested
+        if save_results:
+            saved_files = self.save_analysis_results(
+                results=results, round_name="nucleus_centric_analysis"
+            )
+            results["saved_files"] = saved_files
+
+        print(f"Nucleus-centric analysis completed for {len(intensity_data)} nuclei")
+        return results
+
+    def _save_as_hdf5(self, results: Dict[str, Any], hdf5_path: Path):
+        """Save results as HDF5 format."""
+        try:
+            import h5py
+
+            with h5py.File(hdf5_path, "w") as f:
+                # Save metadata
+                metadata = results.get("metadata", {})
+                if metadata:
+                    meta_group = f.create_group("metadata")
+                    for key, value in metadata.items():
+                        if isinstance(value, (str, int, float)):
+                            meta_group.attrs[key] = value
+
+                # Save intensity data
+                intensity_data = results.get("intensity_data", {})
+                if intensity_data:
+                    intensity_group = f.create_group("intensity_data")
+
+                    for nucleus_label, nucleus_data in intensity_data.items():
+                        if hasattr(nucleus_data, "nuclei_intensities"):
+                            nucleus_group = intensity_group.create_group(
+                                str(nucleus_label)
+                            )
+
+                            # Save intensities as datasets
+                            for region in ["nuclei", "shell", "combined"]:
+                                region_intensities = getattr(
+                                    nucleus_data, f"{region}_intensities", {}
+                                )
+                                if region_intensities:
+                                    region_group = nucleus_group.create_group(region)
+                                    for (
+                                        channel,
+                                        intensity,
+                                    ) in region_intensities.items():
+                                        region_group.create_dataset(
+                                            channel, data=intensity
+                                        )
+
+                            # Save spatial location and bounding box
+                            nucleus_group.create_dataset(
+                                "centroid", data=nucleus_data.spatial_location
+                            )
+                            nucleus_group.create_dataset(
+                                "bounding_box", data=nucleus_data.bounding_box
+                            )
+
+            print(f"HDF5 data saved with {len(intensity_data)} nuclei")
+
+        except Exception as e:
+            print(f"Error saving HDF5: {e}")

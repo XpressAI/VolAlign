@@ -145,6 +145,12 @@ def main():
         
         # Override port if specified
         port = args.port or config.server.port
+
+        # Reset shared state before starting server
+        from app.core.shared_state import set_shared_data_loader, set_shared_nuclei_processor, _shared_state
+        _shared_state.clear()
+        set_shared_data_loader(None)
+        set_shared_nuclei_processor(None)
         
         print(f"\n   Starting FastAPI server...")
         uvicorn.run(
