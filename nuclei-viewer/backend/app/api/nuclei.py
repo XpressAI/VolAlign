@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from ..core.config import AppConfig, get_config
 from ..core.nuclei_processor import MIPResult
 from ..core.shared_state import get_shared_data_loader, get_shared_nuclei_processor
+from ..core.validation import validate_pipeline_config, PipelineValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,57 @@ class NucleusSummaryResponse(BaseModel):
     has_cached_mip: bool
     available_channels: Optional[List[str]] = None
     mip_shape: Optional[List[int]] = None
+    # Pipeline mode fields
+    has_epitope_analysis: bool = False
+    epitope_calls: Optional[Dict[str, bool]] = None
+    confidence_scores: Optional[Dict[str, float]] = None
+    quality_score: Optional[float] = None
+
+
+class EpitopeAnalysisResponse(BaseModel):
+    """Response model for epitope analysis data."""
+
+    nucleus_label: int
+    epitope_calls: Dict[str, bool]
+    confidence_scores: Dict[str, float]
+    quality_score: float
+    rounds_analyzed: List[str]
+    intensity_statistics: Optional[Dict[str, Any]] = None
+
+
+class PipelineMetadataResponse(BaseModel):
+    """Response model for pipeline metadata."""
+
+    analysis_type: str
+    n_nuclei: int
+    n_rounds: int
+    analysis_region: str
+    cutoff_method: str
+    shell_parameters: Optional[Dict[str, Any]] = None
+
+
+class EpitopeStatisticsResponse(BaseModel):
+    """Response model for epitope analysis statistics."""
+
+    total_nuclei: int
+    rounds_processed: int
+    analysis_region: str
+    cutoff_method: str
+    quality_scores: Dict[str, float]
+    positive_rates: Dict[str, Dict[str, Any]]
+    cutoff_statistics: Dict[str, Any]
+
+
+class ValidationResponse(BaseModel):
+    """Response model for pipeline validation."""
+
+    is_valid: bool
+    errors: List[str]
+    warnings: List[str]
+    missing_files: List[str]
+    invalid_files: List[str]
+    structure_issues: List[str]
+    summary: Dict[str, int]
 
 
 class NucleiPageResponse(BaseModel):
@@ -85,6 +137,8 @@ class MIPResponse(BaseModel):
     channels: List[str]
     individual_mips: Optional[Dict[str, str]] = None  # Base64 encoded images
     composite_mip: Optional[str] = None  # Base64 encoded composite image
+    epitope_calls: Optional[Dict[str, bool]] = None  # Epitope calls per channel
+    confidence_scores: Optional[Dict[str, float]] = None  # Confidence scores per channel
 
 
 @router.get("/extract")
@@ -114,7 +168,7 @@ async def extract_nuclei_info(
 
 @router.get("/list", response_model=NucleiPageResponse)
 async def list_nuclei(
-    page: int = Query(0, ge=0, description="Page number (0-based)"),
+   page: int = Query(0, ge=0, description="Page number (0-based)"),
     page_size: Optional[int] = Query(
         None, ge=1, le=100, description="Number of nuclei per page"
     ),
@@ -178,11 +232,16 @@ async def get_nucleus_summary(
 
 
 @router.post("/mip", response_model=MIPResponse)
-async def compute_mip(request: MIPRequest, processor=Depends(get_nuclei_processor)):
+async def compute_mip(request: MIPRequest):
     """
     Compute maximum intensity projection for a nucleus.
     """
     try:
+        # Get processor manually to avoid dependency injection issues
+        from ..core.shared_state import get_shared_nuclei_processor, get_shared_data_loader
+        processor = get_shared_nuclei_processor()
+        data_loader = get_shared_data_loader()
+        
         # Compute MIP
         mip_result = processor.compute_nucleus_mip(
             nucleus_label=request.nucleus_label,
@@ -197,6 +256,13 @@ async def compute_mip(request: MIPRequest, processor=Depends(get_nuclei_processo
             metadata=mip_result.metadata,
             channels=list(mip_result.mip_data.keys()),
         )
+
+        # Add epitope analysis data if available (pipeline mode)
+        if processor._is_pipeline_mode:
+            nucleus = data_loader.get_nucleus_by_label(request.nucleus_label)
+            if nucleus and hasattr(nucleus, 'epitope_analysis') and nucleus.epitope_analysis:
+                response.epitope_calls = nucleus.epitope_analysis.epitope_calls or {}
+                response.confidence_scores = nucleus.epitope_analysis.confidence_scores or {}
 
         # Generate individual channel images if requested
         if request.return_individual:
@@ -230,6 +296,8 @@ async def compute_mip(request: MIPRequest, processor=Depends(get_nuclei_processo
         raise HTTPException(status_code=500, detail=f"Failed to compute MIP: {str(e)}")
 
 
+
+
 @router.post("/batch-mip")
 async def compute_batch_mips(
     nucleus_labels: List[int],
@@ -238,6 +306,7 @@ async def compute_batch_mips(
         True, description="Return individual channel images"
     ),
     processor=Depends(get_nuclei_processor),
+    data_loader=Depends(get_data_loader),
 ):
     """
     Compute MIPs for multiple nuclei in batch.
@@ -264,6 +333,13 @@ async def compute_batch_mips(
                 metadata=mip_result.metadata,
                 channels=list(mip_result.mip_data.keys()),
             )
+
+            # Add epitope analysis data if available (pipeline mode)
+            if processor._is_pipeline_mode:
+                nucleus = data_loader.get_nucleus_by_label(label)
+                if nucleus and hasattr(nucleus, 'epitope_analysis') and nucleus.epitope_analysis:
+                    response.epitope_calls = nucleus.epitope_analysis.epitope_calls or {}
+                    response.confidence_scores = nucleus.epitope_analysis.confidence_scores or {}
 
             if return_individual:
                 response.individual_mips = {}

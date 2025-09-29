@@ -34,23 +34,58 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Nuclei Viewer application...")
 
     try:
-        # Initialize configuration
-        config_path = Path("config/default_config.yaml")
-        if not config_path.exists():
-            # Try relative to backend directory
-            config_path = (
-                Path(__file__).parent.parent.parent / "config" / "default_config.yaml"
-            )
+        # Check if configuration is already initialized (e.g., by run.py)
+        try:
+            config = get_config()
+            logger.info("Using existing configuration")
+        except RuntimeError:
+            # Configuration not initialized, load it
+            import os
+            config_path = os.environ.get("NUCLEI_VIEWER_CONFIG")
+            
+            if not config_path:
+                # Try default locations
+                possible_paths = [
+                    Path("config/default_config.yaml"),
+                    Path(__file__).parent.parent.parent / "config" / "default_config.yaml",
+                    Path(__file__).parent.parent.parent / "config" / "pipeline_config_example.yaml"
+                ]
+                
+                for path in possible_paths:
+                    if path.exists():
+                        config_path = str(path)
+                        break
 
-        if config_path.exists():
-            init_config(str(config_path))
-            logger.info(f"Configuration loaded from: {config_path}")
+            if config_path and Path(config_path).exists():
+                init_config(str(config_path))
+                logger.info(f"Configuration loaded from: {config_path}")
+            else:
+                logger.warning("Configuration file not found, using defaults")
+                init_config()
+
+            config = get_config()
+
+        # Log configuration mode
+        if hasattr(config.data, 'pipeline') and config.data.pipeline:
+            logger.info("Application configured in pipeline mode")
         else:
-            logger.warning("Configuration file not found, using defaults")
-            init_config()
+            logger.info("Application configured with manual file paths")
 
-        config = get_config()
-        logger.info("Application configured with full file paths for each channel")
+        # Initialize shared state early to ensure dependencies work
+        try:
+            from .core.shared_state import get_shared_data_loader, get_shared_nuclei_processor
+            
+            # Initialize data loader
+            data_loader = get_shared_data_loader()
+            logger.info(f"Shared data loader initialized: {type(data_loader).__name__}")
+            
+            # Initialize nuclei processor
+            nuclei_processor = get_shared_nuclei_processor()
+            logger.info(f"Shared nuclei processor initialized: {type(nuclei_processor).__name__}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to initialize shared state during startup: {e}")
+            # Don't fail startup, but log the warning
 
     except Exception as e:
         logger.error(f"Failed to initialize configuration: {e}")
@@ -128,18 +163,43 @@ async def health_check():
         # Check if configured file paths exist
         file_checks = {}
 
-        # Check segmentation file
-        seg_path = Path(config.data.segmentation.file_path)
-        file_checks["segmentation_file_exists"] = seg_path.exists()
+        try:
+            # Handle different configuration modes
+            if hasattr(config.data, 'pipeline') and config.data.pipeline:
+                # Pipeline mode - check pipeline-specific paths
+                working_dir = Path(config.data.pipeline.pipeline_working_directory)
+                file_checks["working_directory_exists"] = working_dir.exists()
+                
+                if config.data.pipeline.epitope_analysis_file:
+                    epitope_file = working_dir / config.data.pipeline.epitope_analysis_file
+                    file_checks["epitope_analysis_exists"] = epitope_file.exists()
+                
+                # Check for segmentation directory
+                seg_dir = working_dir / "segmentation"
+                file_checks["segmentation_dir_exists"] = seg_dir.exists()
+                
+                # Check for zarr volumes directory
+                zarr_dir = working_dir / "zarr_volumes"
+                file_checks["zarr_volumes_dir_exists"] = zarr_dir.exists()
+                
+            else:
+                # Manual mode - check individual file paths
+                if hasattr(config.data, 'segmentation') and config.data.segmentation:
+                    seg_path = Path(config.data.segmentation.file_path)
+                    file_checks["segmentation_file_exists"] = seg_path.exists()
 
-        # Check DAPI file
-        dapi_path = Path(config.data.dapi_channel.file_path)
-        file_checks["dapi_file_exists"] = dapi_path.exists()
+                if hasattr(config.data, 'dapi_channel') and config.data.dapi_channel:
+                    dapi_path = Path(config.data.dapi_channel.file_path)
+                    file_checks["dapi_file_exists"] = dapi_path.exists()
 
-        # Check epitope channel files
-        for epitope in config.data.epitope_channels:
-            epitope_path = Path(epitope.file_path)
-            file_checks[f"{epitope.name}_file_exists"] = epitope_path.exists()
+                if hasattr(config.data, 'epitope_channels') and config.data.epitope_channels:
+                    for epitope in config.data.epitope_channels:
+                        epitope_path = Path(epitope.file_path)
+                        file_checks[f"{epitope.name}_file_exists"] = epitope_path.exists()
+        
+        except Exception as e:
+            logger.warning(f"Error checking file paths in health check: {e}")
+            file_checks["file_check_error"] = str(e)
 
         health_status = {
             "status": "healthy",
@@ -148,8 +208,13 @@ async def health_check():
         }
 
         # Determine overall status - if any critical files are missing, mark as degraded
-        if not file_checks.get("segmentation_file_exists", False):
-            health_status["status"] = "degraded"
+        # In pipeline mode, check for segmentation directory instead of file
+        if hasattr(config.data, 'pipeline') and config.data.pipeline:
+            if not file_checks.get("segmentation_dir_exists", False):
+                health_status["status"] = "degraded"
+        else:
+            if not file_checks.get("segmentation_file_exists", False):
+                health_status["status"] = "degraded"
 
         return health_status
 
@@ -184,12 +249,19 @@ async def global_exception_handler(request, exc):
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
     """Custom 404 handler."""
+    # Get available routes from the app
+    available_routes = []
+    for route in app.routes:
+        if hasattr(route, 'path'):
+            available_routes.append(route.path)
+    
     return JSONResponse(
         status_code=404,
         content={
             "error": "Not found",
             "detail": f"The requested resource {request.url.path} was not found.",
             "available_endpoints": ["/api/data", "/api/nuclei", "/api/config", "/docs"],
+            "registered_routes": available_routes[:20],  # Limit to first 20 routes
         },
     )
 

@@ -58,6 +58,7 @@ function App() {
   const [selectedNucleus, setSelectedNucleus] = useState(null);
   const [channelSettings, setChannelSettings] = useState({});
   const [serverInfo, setServerInfo] = useState(null);
+  const [currentEpitopeData, setCurrentEpitopeData] = useState(null);
 
   // Snackbar state
   const [snackbar, setSnackbar] = useState({
@@ -157,6 +158,10 @@ function App() {
     }));
   };
 
+  const handleEpitopeDataChange = (epitopeData) => {
+    setCurrentEpitopeData(epitopeData);
+  };
+
   const showSnackbar = (message, severity = 'info') => {
     setSnackbar({
       open: true,
@@ -245,6 +250,7 @@ function App() {
                 channels={availableChannels}
                 channelSettings={channelSettings}
                 onChannelSettingsChange={handleChannelSettingsChange}
+                epitopeData={currentEpitopeData}
               />
             </Box>
 
@@ -266,6 +272,7 @@ function App() {
                     nucleus={selectedNucleus}
                     channelSettings={channelSettings}
                     onClose={() => setSelectedNucleus(null)}
+                    onEpitopeDataChange={handleEpitopeDataChange}
                   />
                 </Box>
               )}

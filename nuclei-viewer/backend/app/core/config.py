@@ -27,12 +27,50 @@ class DataSourceConfig(BaseModel):
     array_key: Optional[str] = None
 
 
+class PipelineDataSourceConfig(BaseModel):
+    """Configuration for pipeline-based data sources."""
+    
+    type: str = "pipeline"  # "pipeline" or "manual"
+    pipeline_working_directory: str
+    reference_round: str
+    epitope_analysis_file: Optional[str] = "epitope_analysis/nucleus_centric_analysis_epitope_analysis.json"
+    
+    # Optional overrides for pipeline structure
+    segmentation_file: Optional[str] = None  # Auto-detected if None
+    zarr_volumes_dir: Optional[str] = "zarr_volumes"
+    aligned_dir: Optional[str] = "aligned"
+    segmentation_dir: Optional[str] = "segmentation"
+    
+    # Channel discovery settings
+    auto_discover_channels: bool = True
+    epitope_channels: List[str] = []  # Specific channels to load, empty = all
+
+
 class DataConfig(BaseModel):
     """Data configuration section."""
 
-    segmentation: DataSourceConfig
-    dapi_channel: DataSourceConfig
+    # Legacy manual configuration (backward compatibility)
+    segmentation: Optional[DataSourceConfig] = None
+    dapi_channel: Optional[DataSourceConfig] = None
     epitope_channels: List[EpitopeChannelConfig] = []
+    
+    # New pipeline configuration
+    pipeline: Optional[PipelineDataSourceConfig] = None
+    
+    @validator('pipeline', 'segmentation')
+    def validate_data_source(cls, v, values):
+        """Ensure either pipeline or manual configuration is provided."""
+        pipeline = values.get('pipeline') if 'pipeline' in values else v
+        segmentation = values.get('segmentation') if 'segmentation' in values else None
+        
+        if pipeline is None and segmentation is None:
+            raise ValueError("Either pipeline or manual data configuration must be provided")
+        
+        return v
+    
+    def is_pipeline_mode(self) -> bool:
+        """Check if using pipeline-based configuration."""
+        return self.pipeline is not None
 
 
 class ProcessingConfig(BaseModel):
@@ -64,6 +102,23 @@ class ServerConfig(BaseModel):
     cors_origins: List[str] = ["http://localhost:3000"]
 
 
+class EpitopeAnalysisUIConfig(BaseModel):
+    """Epitope analysis UI configuration."""
+    
+    show_epitope_calls: bool = True
+    show_confidence_scores: bool = True
+    show_quality_scores: bool = True
+    confidence_threshold: float = 0.7
+    positive_call_color: str = "#4CAF50"
+    negative_call_color: str = "#F44336"
+    uncertain_call_color: str = "#FF9800"
+    quality_score_thresholds: Dict[str, float] = {
+        "high": 0.8,
+        "medium": 0.5,
+        "low": 0.0
+    }
+
+
 class UIConfig(BaseModel):
     """UI configuration."""
 
@@ -80,6 +135,7 @@ class UIConfig(BaseModel):
         "#80ff00",
         "#0080ff",
     ]
+    epitope_analysis: Optional[EpitopeAnalysisUIConfig] = None
 
     @validator("default_opacity")
     def validate_opacity(cls, v):
@@ -111,6 +167,9 @@ class Settings(BaseSettings):
 def load_config(config_path: Optional[str] = None) -> AppConfig:
     """
     Load configuration from YAML file.
+    
+    Supports both standalone nuclei-viewer config and VolAlign pipeline config
+    with nuclei_viewer section.
 
     Args:
         config_path: Path to configuration file. If None, uses default from settings.
@@ -136,6 +195,27 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
             config_data = yaml.safe_load(f)
     except yaml.YAMLError as e:
         raise yaml.YAMLError(f"Invalid YAML in config file {config_path}: {e}")
+
+    # Handle VolAlign pipeline config structure
+    if "nuclei_viewer" in config_data:
+        # Extract nuclei_viewer section and inherit from main config
+        nuclei_config = config_data["nuclei_viewer"].copy()
+        
+        # Inherit working directory and reference round if not specified
+        if "data" in nuclei_config and "pipeline" in nuclei_config["data"]:
+            pipeline_config = nuclei_config["data"]["pipeline"]
+            
+            # Inherit working_directory if not specified
+            if not pipeline_config.get("pipeline_working_directory"):
+                pipeline_config["pipeline_working_directory"] = config_data.get("working_directory", "")
+            
+            # Inherit reference_round if not specified
+            if not pipeline_config.get("reference_round"):
+                if "data" in config_data and "reference_round" in config_data["data"]:
+                    pipeline_config["reference_round"] = config_data["data"]["reference_round"]
+        
+        # Use the nuclei_viewer section as the main config
+        config_data = nuclei_config
 
     try:
         return AppConfig(**config_data)

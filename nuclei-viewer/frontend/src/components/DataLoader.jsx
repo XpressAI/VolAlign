@@ -43,8 +43,31 @@ const DataLoader = ({ onDataLoaded }) => {
       const configData = await configAPI.getConfig();
       setConfig(configData);
       
-      // Always start at step 0 (config editor) to allow user to verify/modify paths
-      setActiveStep(0);
+      // Check if we're in pipeline mode - comprehensive detection
+      const isPipelineMode = configData.data?.mode === 'pipeline' ||
+                            !!configData.data?.pipeline ||
+                            (configData.data?.base_path && configData.data?.pipeline?.reference_round);
+      
+      console.log('Initial pipeline mode detection:', {
+        mode: configData.data?.mode,
+        hasPipelineSection: !!configData.data?.pipeline,
+        hasBasePath: !!configData.data?.base_path,
+        hasReferenceRound: !!configData.data?.pipeline?.reference_round,
+        isPipelineMode,
+        fullConfigData: configData.data
+      });
+      
+      if (isPipelineMode) {
+        // In pipeline mode, automatically load data and skip to viewer
+        setActiveStep(1); // Go to loading step
+        // Auto-load data in pipeline mode
+        setTimeout(() => {
+          handleLoadDatasets(configData);
+        }, 500);
+      } else {
+        // Manual mode - start at step 0 (config editor) to allow user to verify/modify paths
+        setActiveStep(0);
+      }
     } catch (err) {
       console.error('Failed to load config:', err);
       setError('Failed to load configuration. Please check your config file.');
@@ -80,33 +103,66 @@ const DataLoader = ({ onDataLoaded }) => {
         throw new Error('No configuration available');
       }
 
-      // Load datasets using the configured paths
-      const loadRequest = {
-        segmentation: {
-          file_path: currentConfig.data.segmentation.file_path,
-          array_key: currentConfig.data.segmentation.array_key
-        },
-        dapi_channel: {
-          file_path: currentConfig.data.dapi_channel.file_path,
-          array_key: currentConfig.data.dapi_channel.array_key
-        },
-        epitope_channels: currentConfig.data.epitope_channels.map(ch => ({
-          name: ch.name,
-          file_path: ch.file_path,
-          array_key: ch.array_key,
-          default_color: ch.default_color
-        }))
-      };
+      // Check if we're in pipeline mode - comprehensive detection
+      const isPipelineMode = currentConfig.data?.mode === 'pipeline' ||
+                            !!currentConfig.data?.pipeline ||
+                            (currentConfig.data?.base_path && currentConfig.data?.pipeline?.reference_round);
+      
+      console.log('Pipeline mode detection:', {
+        mode: currentConfig.data?.mode,
+        hasPipelineSection: !!currentConfig.data?.pipeline,
+        hasBasePath: !!currentConfig.data?.base_path,
+        hasReferenceRound: !!currentConfig.data?.pipeline?.reference_round,
+        isPipelineMode,
+        fullConfigData: currentConfig.data
+      });
+      
+      if (isPipelineMode) {
+        // In pipeline mode, use the load-all endpoint which automatically discovers data
+        console.log('Using pipeline mode - calling loadAllDatasets()');
+        const result = await dataAPI.loadAllDatasets();
+        setLoadedDatasets(result.loaded_datasets || {});
+        
+        // In pipeline mode, we expect different data structure
+        if (result.success) {
+          // Automatically advance to completion for pipeline mode
+          setActiveStep(2);
+          // Notify parent that data is loaded
+          if (onDataLoaded) {
+            onDataLoaded();
+          }
+        } else {
+          setError(result.message || 'Failed to load pipeline data');
+        }
+      } else {
+        // Manual mode - load datasets using the configured paths
+        const loadRequest = {
+          segmentation: {
+            file_path: currentConfig.data.segmentation?.file_path,
+            array_key: currentConfig.data.segmentation?.array_key
+          },
+          dapi_channel: {
+            file_path: currentConfig.data.dapi_channel?.file_path,
+            array_key: currentConfig.data.dapi_channel?.array_key
+          },
+          epitope_channels: (currentConfig.data.epitope_channels || []).map(ch => ({
+            name: ch.name,
+            file_path: ch.file_path,
+            array_key: ch.array_key,
+            default_color: ch.default_color
+          }))
+        };
 
-      const result = await dataAPI.loadDatasets(loadRequest);
-      setLoadedDatasets(result.loaded_datasets);
-      
-      // Check if essential datasets were loaded
-      const hasSegmentation = result.loaded_datasets.segmentation && !result.loaded_datasets.segmentation.error;
-      const hasDapi = result.loaded_datasets.dapi && !result.loaded_datasets.dapi.error;
-      
-      if (!hasSegmentation || !hasDapi) {
-        setError('Failed to load essential datasets (segmentation and DAPI channel)');
+        const result = await dataAPI.loadDatasets(loadRequest);
+        setLoadedDatasets(result.loaded_datasets || {});
+        
+        // Check if essential datasets were loaded
+        const hasSegmentation = result.loaded_datasets?.segmentation && !result.loaded_datasets.segmentation.error;
+        const hasDapi = result.loaded_datasets?.dapi && !result.loaded_datasets.dapi.error;
+        
+        if (!hasSegmentation || !hasDapi) {
+          setError('Failed to load essential datasets (segmentation and DAPI channel)');
+        }
       }
       // Don't automatically advance to next step - let user review the results
     } catch (err) {
@@ -117,6 +173,16 @@ const DataLoader = ({ onDataLoaded }) => {
   };
 
   const handleConfigUpdate = async (updatedConfig) => {
+    // Skip config updates in pipeline mode - comprehensive detection
+    const isPipelineMode = config.data?.mode === 'pipeline' ||
+                          !!config.data?.pipeline ||
+                          (config.data?.base_path && config.data?.pipeline?.reference_round);
+    
+    if (isPipelineMode) {
+      setError(null);
+      return;
+    }
+    
     try {
       await configAPI.updateConfig(updatedConfig);
       await configAPI.saveConfig();
@@ -134,6 +200,52 @@ const DataLoader = ({ onDataLoaded }) => {
   const renderConfigEditor = () => {
     if (!config) return null;
 
+    // Check if we're in pipeline mode - comprehensive detection
+    const isPipelineMode = config.data?.mode === 'pipeline' ||
+                          !!config.data?.pipeline ||
+                          (config.data?.base_path && config.data?.pipeline?.reference_round);
+    
+    if (isPipelineMode) {
+      return (
+        <Box>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            <Typography variant="h6" gutterBottom>Pipeline Mode Detected</Typography>
+            <Typography variant="body2">
+              The application is running in pipeline integration mode. Data will be automatically loaded from your VolAlign pipeline outputs.
+            </Typography>
+          </Alert>
+          
+          <Typography variant="body2" paragraph>
+            <strong>Working Directory:</strong> {config.working_directory}
+          </Typography>
+          
+          <Typography variant="body2" paragraph>
+            <strong>Reference Round:</strong> {config.data.pipeline?.reference_round || 'Not specified'}
+          </Typography>
+          
+          <Typography variant="body2" paragraph>
+            <strong>Epitope Analysis File:</strong> {config.data.pipeline?.epitope_analysis_file || 'Not specified'}
+          </Typography>
+          
+          {config.data.pipeline?.epitope_channels && config.data.pipeline.epitope_channels.length > 0 && (
+            <Box>
+              <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
+                Configured Epitope Channels ({config.data.pipeline.epitope_channels.length})
+              </Typography>
+              {config.data.pipeline.epitope_channels.map((channel, index) => (
+                <Chip
+                  key={index}
+                  label={`${channel.name} (${channel.wavelength}nm)`}
+                  sx={{ mr: 1, mb: 1 }}
+                />
+              ))}
+            </Box>
+          )}
+        </Box>
+      );
+    }
+
+    // Manual mode configuration editor
     return (
       <Box>
         <Typography variant="body2" paragraph>
@@ -147,7 +259,7 @@ const DataLoader = ({ onDataLoaded }) => {
         <TextField
           fullWidth
           label="Segmentation File Path"
-          value={config.data.segmentation.file_path || ''}
+          value={config.data.segmentation?.file_path || ''}
           onChange={(e) => setConfig({
             ...config,
             data: {
@@ -165,7 +277,7 @@ const DataLoader = ({ onDataLoaded }) => {
         <TextField
           fullWidth
           label="DAPI Channel File Path"
-          value={config.data.dapi_channel.file_path || ''}
+          value={config.data.dapi_channel?.file_path || ''}
           onChange={(e) => setConfig({
             ...config,
             data: {
@@ -181,10 +293,10 @@ const DataLoader = ({ onDataLoaded }) => {
         />
         
         <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
-          Epitope Channels ({config.data.epitope_channels.length})
+          Epitope Channels ({config.data.epitope_channels?.length || 0})
         </Typography>
         
-        {config.data.epitope_channels.map((channel, index) => (
+        {config.data.epitope_channels?.map((channel, index) => (
           <Box key={index} sx={{ mb: 2, p: 2, border: '1px solid #e0e0e0', borderRadius: 1 }}>
             <Typography variant="body2" fontWeight={500} gutterBottom>
               {channel.name}
@@ -208,7 +320,11 @@ const DataLoader = ({ onDataLoaded }) => {
               placeholder={`/full/path/to/${channel.name}_channel.zarr`}
             />
           </Box>
-        ))}
+        )) || (
+          <Typography variant="body2" color="text.secondary">
+            No epitope channels configured
+          </Typography>
+        )}
       </Box>
     );
   };
@@ -273,45 +389,77 @@ const DataLoader = ({ onDataLoaded }) => {
           </Typography>
 
           <Stepper activeStep={activeStep} orientation="vertical">
-            {/* Step 1: Edit Configuration */}
+            {/* Step 1: Configuration Review/Edit */}
             <Step>
-              <StepLabel>Edit Data Paths</StepLabel>
+              <StepLabel>
+                {(config.data?.mode === 'pipeline' || !!config.data?.pipeline) ? 'Pipeline Configuration' : 'Edit Data Paths'}
+              </StepLabel>
               <StepContent>
                 {renderConfigEditor()}
 
                 <Box display="flex" gap={1} mt={2}>
-                  <Button
-                    variant="contained"
-                    onClick={async () => {
-                      await handleConfigUpdate({
-                        data: config.data
-                      });
-                      handleNext();
-                    }}
-                    disabled={loading}
-                  >
-                    Save & Continue
-                  </Button>
-                  
-                  <Button
-                    variant="outlined"
-                    onClick={() => handleNext()}
-                    disabled={loading}
-                    startIcon={<PlayArrowIcon />}
-                  >
-                    Use Current Paths
-                  </Button>
+                  {!(config.data?.mode === 'pipeline' || !!config.data?.pipeline) ? (
+                    <>
+                      <Button
+                        variant="contained"
+                        onClick={async () => {
+                          await handleConfigUpdate({
+                            data: config.data
+                          });
+                          handleNext();
+                        }}
+                        disabled={loading}
+                      >
+                        Save & Continue
+                      </Button>
+                      
+                      <Button
+                        variant="outlined"
+                        onClick={() => handleNext()}
+                        disabled={loading}
+                        startIcon={<PlayArrowIcon />}
+                      >
+                        Use Current Paths
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      variant="contained"
+                      onClick={() => handleNext()}
+                      disabled={loading}
+                      startIcon={<PlayArrowIcon />}
+                    >
+                      Continue to Data Loading
+                    </Button>
+                  )}
                 </Box>
               </StepContent>
             </Step>
 
             {/* Step 2: Load Datasets */}
             <Step>
-              <StepLabel>Load Datasets</StepLabel>
+              <StepLabel>
+                {(config.data?.mode === 'pipeline' || !!config.data?.pipeline) ? 'Loading Pipeline Data' : 'Load Datasets'}
+              </StepLabel>
               <StepContent>
                 <Typography variant="body2" paragraph>
-                  Load your configured datasets into memory for processing.
+                  {(config.data?.mode === 'pipeline' || !!config.data?.pipeline)
+                    ? 'Loading data from your VolAlign pipeline outputs. This may take several minutes for large datasets...'
+                    : 'Load your configured datasets into memory for processing.'
+                  }
                 </Typography>
+
+                {loading && (config.data?.mode === 'pipeline' || !!config.data?.pipeline) && (
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                      <strong>Pipeline data loading in progress...</strong>
+                    </Typography>
+                    <Typography variant="body2">
+                      This process may take 2-5 minutes depending on your dataset size.
+                      The system is loading zarr files, segmentation masks, and epitope analysis results.
+                    </Typography>
+                  </Alert>
+                )}
 
                 {Object.keys(loadedDatasets).length > 0 && (
                   <Box mb={2}>
@@ -333,7 +481,7 @@ const DataLoader = ({ onDataLoaded }) => {
                     disabled={loading}
                     startIcon={loading ? <CircularProgress size={16} /> : <StorageIcon />}
                   >
-                    {loading ? 'Loading...' : 'Load Datasets'}
+                    {loading ? 'Loading...' : ((config.data?.mode === 'pipeline' || !!config.data?.pipeline) ? 'Load Pipeline Data' : 'Load Datasets')}
                   </Button>
                   
                   {Object.keys(loadedDatasets).length > 0 && !loading && (

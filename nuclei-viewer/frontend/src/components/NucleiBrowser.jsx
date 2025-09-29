@@ -25,6 +25,9 @@ import {
 import {
   Refresh as RefreshIcon,
   Info as InfoIcon,
+  CheckCircle as CheckCircleIcon,
+  Cancel as CancelIcon,
+  Help as HelpIcon,
 } from '@mui/icons-material';
 
 import { nucleiAPI, utils } from '../services/api';
@@ -188,28 +191,40 @@ const NucleiBrowser = ({
     const isLoadingMIP = loadingMIPs.has(nucleus.label);
     const mipData = nucleiMIPs[nucleus.label];
     
+    // Extract epitope call information
+    const hasEpitopeAnalysis = nucleus.has_epitope_analysis || false;
+    const epitopeCalls = nucleus.epitope_calls || {};
+    const confidenceScores = nucleus.confidence_scores || {};
+    const qualityScore = nucleus.quality_score;
+    
+    // Count positive and negative calls (exclude 405nm DAPI channels)
+    const epitopeChannels = Object.keys(epitopeCalls).filter(channel => !channel.endsWith('_405'));
+    const positiveCalls = epitopeChannels.filter(channel => epitopeCalls[channel] === true).length;
+    const negativeCalls = epitopeChannels.filter(channel => epitopeCalls[channel] === false).length;
+    const totalEpitopeCalls = epitopeChannels.length;
+    
     return (
       <Grid item xs={12} sm={6} md={4} lg={3} key={nucleus.label}>
-        <Card 
+        <Card
           variant={isSelected ? "outlined" : "elevation"}
-          sx={{ 
+          sx={{
             height: '100%',
             border: isSelected ? 2 : 0,
             borderColor: isSelected ? 'primary.main' : 'transparent',
           }}
         >
-          <CardActionArea 
+          <CardActionArea
             onClick={() => handleNucleusClick(nucleus)}
             sx={{ height: '100%' }}
           >
             <CardContent>
               {/* Nucleus Image */}
-              <Box 
-                sx={{ 
-                  height: 150, 
-                  mb: 1, 
-                  display: 'flex', 
-                  alignItems: 'center', 
+              <Box
+                sx={{
+                  height: 150,
+                  mb: 1,
+                  display: 'flex',
+                  alignItems: 'center',
                   justifyContent: 'center',
                   backgroundColor: 'grey.100',
                   borderRadius: 1,
@@ -239,21 +254,66 @@ const NucleiBrowser = ({
               </Typography>
               
               <Box display="flex" flexWrap="wrap" gap={0.5} mb={1}>
-                <Chip 
-                  label={`Area: ${nucleus.area}`} 
-                  size="small" 
-                  variant="outlined" 
+                <Chip
+                  label={`Area: ${nucleus.area}`}
+                  size="small"
+                  variant="outlined"
                 />
-                <Chip 
-                  label={`Z: ${Math.round(nucleus.centroid[0])}`} 
-                  size="small" 
-                  variant="outlined" 
+                <Chip
+                  label={`Z: ${Math.round(nucleus.centroid[0])}`}
+                  size="small"
+                  variant="outlined"
                 />
               </Box>
+              
+              {/* Epitope Call Summary */}
+              {hasEpitopeAnalysis && totalEpitopeCalls > 0 && (
+                <Box display="flex" flexWrap="wrap" gap={0.5} mb={1}>
+                  {positiveCalls > 0 && (
+                    <Tooltip title={`${positiveCalls} positive epitope call${positiveCalls > 1 ? 's' : ''}`}>
+                      <Chip
+                        icon={<CheckCircleIcon />}
+                        label={`+${positiveCalls}`}
+                        size="small"
+                        color="success"
+                        variant="outlined"
+                        sx={{
+                          fontSize: '0.7rem',
+                          height: 20,
+                          '& .MuiChip-icon': { fontSize: '0.7rem' }
+                        }}
+                      />
+                    </Tooltip>
+                  )}
+                  {negativeCalls > 0 && (
+                    <Tooltip title={`${negativeCalls} negative epitope call${negativeCalls > 1 ? 's' : ''}`}>
+                      <Chip
+                        icon={<CancelIcon />}
+                        label={`-${negativeCalls}`}
+                        size="small"
+                        color="default"
+                        variant="outlined"
+                        sx={{
+                          fontSize: '0.7rem',
+                          height: 20,
+                          '& .MuiChip-icon': { fontSize: '0.7rem' }
+                        }}
+                      />
+                    </Tooltip>
+                  )}
+                </Box>
+              )}
               
               {nucleus.available_channels && (
                 <Typography variant="body2" color="text.secondary">
                   Channels: {nucleus.available_channels.join(', ')}
+                </Typography>
+              )}
+              
+              {/* Pipeline Mode Indicator */}
+              {hasEpitopeAnalysis && (
+                <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                  Pipeline analysis available
                 </Typography>
               )}
             </CardContent>

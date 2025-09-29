@@ -2,7 +2,7 @@
  * ChannelControls component - manages channel visualization settings
  */
 
-import React, { useState } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   Box,
   Card,
@@ -28,17 +28,29 @@ import {
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
   Settings as SettingsIcon,
+  CheckCircle as CheckCircleIcon,
+  Cancel as CancelIcon,
 } from '@mui/icons-material';
 import { ChromePicker } from 'react-color';
 
-const ChannelControls = ({ 
-  channels, 
-  channelSettings, 
-  onChannelSettingsChange 
+const ChannelControls = ({
+  channels,
+  channelSettings,
+  onChannelSettingsChange,
+  epitopeData = null
 }) => {
   const [expanded, setExpanded] = useState(true);
   const [colorPickerOpen, setColorPickerOpen] = useState(null);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(null);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(colorChangeTimeouts.current).forEach(timeoutId => {
+        clearTimeout(timeoutId);
+      });
+    };
+  }, []);
 
   const handleToggleExpanded = () => {
     setExpanded(!expanded);
@@ -60,13 +72,25 @@ const ChannelControls = ({
     });
   };
 
-  const handleColorChange = (channelName, color) => {
-    const currentSettings = channelSettings[channelName] || {};
-    onChannelSettingsChange(channelName, {
-      ...currentSettings,
-      color: color.hex,
-    });
-  };
+  // Debounced color change handler to reduce API calls
+  const colorChangeTimeouts = useRef({});
+  
+  const handleColorChange = useCallback((channelName, color) => {
+    // Clear existing timeout for this channel
+    if (colorChangeTimeouts.current[channelName]) {
+      clearTimeout(colorChangeTimeouts.current[channelName]);
+    }
+    
+    // Set new timeout for debounced update
+    colorChangeTimeouts.current[channelName] = setTimeout(() => {
+      const currentSettings = channelSettings[channelName] || {};
+      onChannelSettingsChange(channelName, {
+        ...currentSettings,
+        color: color.hex,
+      });
+      delete colorChangeTimeouts.current[channelName];
+    }, 200); // 200ms debounce for color changes
+  }, [channelSettings, onChannelSettingsChange]);
 
   const handleContrastToggle = (channelName) => {
     const currentSettings = channelSettings[channelName] || {};
@@ -116,6 +140,14 @@ const ChannelControls = ({
     const opacity = Math.round((settings.opacity || 0.8) * 100);
     const color = settings.color || channelInfo.default_color;
 
+    // Check for epitope call data (exclude 405nm DAPI channels)
+    const is405Channel = channelName.endsWith('_405');
+    const hasEpitopeCall = epitopeData && epitopeData.epitope_calls && channelName in epitopeData.epitope_calls;
+    const epitopeCall = hasEpitopeCall ? epitopeData.epitope_calls[channelName] : null;
+    const confidenceScore = epitopeData && epitopeData.confidence_scores && channelName in epitopeData.confidence_scores
+      ? epitopeData.confidence_scores[channelName]
+      : null;
+
     return (
       <Card key={channelName} variant="outlined" sx={{ mb: 1 }}>
         <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
@@ -135,12 +167,40 @@ const ChannelControls = ({
                     <Typography variant="body2" fontWeight={500}>
                       {channelInfo.name || channelName}
                     </Typography>
-                    <Chip 
-                      label={channelInfo.type} 
-                      size="small" 
+                    <Chip
+                      label={channelInfo.type}
+                      size="small"
                       variant="outlined"
                       sx={{ height: 20, fontSize: '0.7rem' }}
                     />
+                    {/* Epitope Classification Tag - only for non-405nm channels */}
+                    {!is405Channel && hasEpitopeCall && (
+                      <Chip
+                        icon={epitopeCall ? <CheckCircleIcon /> : <CancelIcon />}
+                        label={epitopeCall ? 'Positive' : 'Negative'}
+                        size="small"
+                        color={epitopeCall ? 'success' : 'default'}
+                        variant="outlined"
+                        sx={{
+                          fontSize: '0.65rem',
+                          height: 20,
+                          '& .MuiChip-icon': { fontSize: '0.7rem' }
+                        }}
+                      />
+                    )}
+                    {/* DAPI Channel Tag - for 405nm channels */}
+                    {is405Channel && (
+                      <Chip
+                        label="DAPI"
+                        size="small"
+                        color="primary"
+                        variant="outlined"
+                        sx={{
+                          fontSize: '0.65rem',
+                          height: 20
+                        }}
+                      />
+                    )}
                   </Box>
                 }
               />
@@ -177,6 +237,15 @@ const ChannelControls = ({
               </Tooltip>
             </Box>
           </Box>
+
+          {/* Confidence Score - only for epitope channels with calls */}
+          {!is405Channel && hasEpitopeCall && confidenceScore !== null && (
+            <Box mt={1}>
+              <Typography variant="caption" color="text.secondary">
+                Confidence: {(confidenceScore * 100).toFixed(1)}%
+              </Typography>
+            </Box>
+          )}
 
           {/* Opacity Slider */}
           {isEnabled && (
